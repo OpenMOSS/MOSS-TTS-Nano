@@ -22,6 +22,10 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
+<p align="center">
+  <img src="./assets/images/concept.png" alt="MOSS-TTS-Nano concept" />
+</p>
+
 MOSS-TTS-Nano is an open-source **multilingual tiny speech generation model** from [MOSI.AI](https://mosi.cn/#hero) and the [OpenMOSS team](https://www.open-moss.com/). With only **0.1B parameters**, it is designed for **realtime speech generation**, can run directly on **CPU without a GPU**, and keeps the deployment stack simple enough for local demos, web serving, and lightweight product integration.
 
 ## News
