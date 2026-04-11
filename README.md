@@ -159,6 +159,24 @@ moss-tts-nano serve
 
 This command forwards to `app.py`, keeps the model loaded in memory, and serves the local browser demo plus HTTP generation endpoints.
 
+## MOSS-Audio-Tokenizer
+
+<a id="mat-intro"></a>
+### Introduction
+**MOSS-Audio-Tokenizer** serves as the unified discrete audio interface for the entire MOSS-TTS Family. It is based on the **Cat** (**C**ausal **A**udio **T**okenizer with **T**ransformer) architecture—a 1.6-billion-parameter, "CNN-free" homogeneous audio tokenizer built entirely from Causal Transformer blocks.
+
+- **Unified Discrete Bridge**: It acts as the shared backbone for MOSS-TTS, MOSS-TTSD, MOSS-VoiceGenerator, MOSS-SoundEffect, and MOSS-TTS-Realtime, providing a consistent audio representation across the family.
+- **Extreme Compression & High Fidelity**: It compresses 24kHz raw audio into a remarkably low frame rate of 12.5Hz. Utilizing a 32-layer Residual Vector Quantizer (RVQ), it supports high-fidelity reconstruction across variable bitrates from 0.125kbps to 4kbps.
+- **Massive-Scale General Audio Training**: Trained from scratch on 3 million hours of diverse data (speech, sound effects, and music), the model achieves state-of-the-art reconstruction among open source audio tokenizers.
+- **Native Streaming Design**: The pure Causal Transformer architecture is specifically designed for scalability and low-latency streaming inference, enabling real-time production workflows.
+
+To learn more about setup, advanced usage, and evaluation metrics, please visit the [MOSS-Audio-Tokenizer Repository](https://github.com/OpenMOSS/MOSS-Audio-Tokenizer)
+
+<p align="center">
+  <img src="./assets/arch_moss_audio_tokenizer_nano.png" alt="MOSS Audio Tokenizer Nano architecture" width="100%" />
+  Architecture of MOSS Audio Tokenizer
+</p>
+
 ## License
 
 This repository will follow the license specified in the root `LICENSE` file. If you are reading this before that file is published, please treat the repository as **not yet licensed for redistribution**.
