@@ -159,16 +159,14 @@ moss-tts-nano serve
 
 This command forwards to `app.py`, keeps the model loaded in memory, and serves the local browser demo plus HTTP generation endpoints.
 
-## MOSS-Audio-Tokenizer
+## MOSS-Audio-Tokenizer-Nano
 
 <a id="mat-intro"></a>
 ### Introduction
-**MOSS-Audio-Tokenizer** serves as the unified discrete audio interface for the entire MOSS-TTS Family. It is based on the **Cat** (**C**ausal **A**udio **T**okenizer with **T**ransformer) architecture—a 1.6-billion-parameter, "CNN-free" homogeneous audio tokenizer built entirely from Causal Transformer blocks.
+**MOSS-Audio-Tokenizer** is the unified discrete audio interface for the entire MOSS-TTS family. It is built on the **Cat** (**C**ausal **A**udio **T**okenizer with **T**ransformer) architecture, a CNN-free audio tokenizer composed entirely of causal Transformer blocks. It serves as the shared audio backbone for MOSS-TTS, MOSS-TTS-Nano, MOSS-TTSD, MOSS-VoiceGenerator, MOSS-SoundEffect, and MOSS-TTS-Realtime, providing a consistent audio representation across the full product family.
 
-- **Unified Discrete Bridge**: It acts as the shared backbone for MOSS-TTS, MOSS-TTSD, MOSS-VoiceGenerator, MOSS-SoundEffect, and MOSS-TTS-Realtime, providing a consistent audio representation across the family.
-- **Extreme Compression & High Fidelity**: It compresses 24kHz raw audio into a remarkably low frame rate of 12.5Hz. Utilizing a 32-layer Residual Vector Quantizer (RVQ), it supports high-fidelity reconstruction across variable bitrates from 0.125kbps to 4kbps.
-- **Massive-Scale General Audio Training**: Trained from scratch on 3 million hours of diverse data (speech, sound effects, and music), the model achieves state-of-the-art reconstruction among open source audio tokenizers.
-- **Native Streaming Design**: The pure Causal Transformer architecture is specifically designed for scalability and low-latency streaming inference, enabling real-time production workflows.
+To further improve perceptual quality while reducing inference cost, we trained **MOSS-Audio-Tokenizer-Nano**, a lightweight tokenizer with approximately **20 million parameters** designed for high-fidelity audio compression. It supports **48 kHz** input and output as well as **stereo audio**, which helps reduce compression loss and improve listening quality. It can compress **48 kHz stereo audio** into a **12.5 Hz** token stream and uses **RVQ with 16 codebooks**, enabling high-fidelity reconstruction across variable bitrates from **0.125 kbps to 4 kbps**.
+
 
 To learn more about setup, advanced usage, and evaluation metrics, please visit the [MOSS-Audio-Tokenizer Repository](https://github.com/OpenMOSS/MOSS-Audio-Tokenizer)
 
