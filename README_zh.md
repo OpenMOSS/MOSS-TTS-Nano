@@ -25,11 +25,7 @@
 
 MOSS-TTS-Nano 是来自 [MOSI.AI](https://mosi.cn/#hero) 和 [OpenMOSS 团队](https://www.open-moss.com/) 的开源**多语言微型语音生成模型**。仅包含 **0.1B 参数**，专为**实时语音生成**设计，可直接在 **CPU 上运行（无需 GPU）**，并保持部署栈足够简单，适用于本地演示、网络服务和轻量级产品集成。
 
-<p align="center">
-  <video src="./assets/videos/demo_video.mp4" controls width="100%">
-    <a href="./assets/videos/demo_video.mp4">观看演示视频</a>
-  </video>
-</p>
+[观看演示视频](./assets/videos/demo_video.mp4)
 
 ## 新闻
 
