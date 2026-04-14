@@ -5,7 +5,6 @@ sentencepiece>=0.1.99
 torch==2.7.0
 torchaudio==2.7.0
 transformers==4.57.1
-sentencepiece
 uvicorn>=0.29.0
 WeTextProcessing>=1.0.4.1
-soundfile
+soundfile>=0.13.1
