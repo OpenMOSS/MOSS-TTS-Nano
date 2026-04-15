@@ -142,6 +142,29 @@ python infer.py \
 
 默认情况下，这会将音频写入 `generated_audio/infer_output.wav`。
 
+#### 语音克隆细节
+
+社区里反复出现的几个问题（参见 [#9](https://github.com/OpenMOSS/MOSS-TTS-Nano/issues/9)）：
+
+1. **可以传入参考音频的转写文本吗？**
+   可以 — 使用 `--prompt-text "<转写>"`（或 `--prompt-text-file path.txt`）。
+   `--mode voice_clone`（默认）和 `--mode continuation` 都支持。提供该转写
+   通常能提升克隆质量，因为模型可以将提示片段的文本与音频对齐。
+
+2. **参考音频应该多长？**
+   没有硬性限制 — 音频 tokenizer 接受任意长度，提示部分会受
+   `--max-new-frames` / `--voice-clone-max-text-tokens` 内部裁剪。经验上，
+   3–10 秒左右的*干净*单人语音效果最好：过长的片段会把模型的提示预算
+   花在声学上下文上，过短（< 2 秒）的片段又难以承载足够音色信息。
+   如果输出质量下降，建议截取一段约 5 秒的清晰单人语音重试。
+
+3. **如何在多次生成之间缓存语音 profile？**
+   目前没有独立的"语音 profile"对象 — 最干净的做法是让模型驻留在进程中
+   （例如 `python -i infer.py`、`moss-tts-nano serve`，或在脚本中复用
+   `MossTtsNanoRuntime` 实例），然后用相同的 `prompt_audio_path` 和
+   `prompt_text` 反复调用 `model.inference(...)`。音频 tokenizer 每次都会
+   重新编码提示，但模型权重保持加载状态。
+
 ### 使用 `app.py` 启动本地 Web 演示
 
 您可以启动本地 FastAPI 演示进行基于浏览器的测试：
