@@ -20,6 +20,8 @@ dependencies = [
   "torchaudio==2.7.0",
   "transformers==4.57.1",
   "uvicorn>=0.29.0",
+  "WeTextProcessing>=1.0.4.1",
+  "soundfile>=0.13.1",
 ]
 
 [project.urls]
