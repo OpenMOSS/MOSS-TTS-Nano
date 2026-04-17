@@ -29,6 +29,7 @@ MOSS-TTS-Nano 是来自 [MOSI.AI](https://mosi.cn/#hero) 和 [OpenMOSS 团队](h
 
 ## 新闻
 
+* 2026.4.17：我们发布了更加高效且可独立运行的 [**ONNX CPU 版本**](#onnx-cpu-version)，支持 `infer_onnx.py` / `app_onnx.py`、对应 Hugging Face 仓库 [**MOSS-TTS-Nano-100M-ONNX**](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX) 与 [**MOSS-Audio-Tokenizer-Nano-ONNX**](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX)，保留音色克隆、直接参考音频输入与 `Realtime Streaming Decode`。
 * 2026.4.16：我们发布了 **MOSS-TTS-Nano 微调代码**。训练和使用说明见 [./finetuning/README_zh.md](./finetuning/README_zh.md)。
 * 2026.4.14：我们发布了 [**MOSS-TTS-Nano-Reader**](https://github.com/OpenMOSS/MOSS-TTS-Nano-Reader)，这是一个基于 **MOSS-TTS-Nano** 的本地浏览器网页朗读应用。
 * 2026.4.10：我们发布了 **MOSS-TTS-Nano**。演示 Space 已在 [OpenMOSS-Team/MOSS-TTS-Nano](https://huggingface.co/spaces/OpenMOSS-Team/MOSS-TTS-Nano) 上线，也可以通过 [openmoss.github.io/MOSS-TTS-Nano-Demo/](https://openmoss.github.io/MOSS-TTS-Nano-Demo/) 查看 demo 和更多细节。
@@ -49,6 +50,7 @@ MOSS-TTS-Nano 是来自 [MOSI.AI](https://mosi.cn/#hero) 和 [OpenMOSS 团队](h
   - [环境配置](#环境配置)
   - [使用 `infer.py` 进行语音克隆](#使用-inferpy-进行语音克隆)
   - [使用 `app.py` 启动本地-web-演示](#使用-apppy-启动本地-web-演示)
+  - [ONNX CPU 版本](#onnx-cpu-version)
   - [CLI 命令：`moss-tts-nano generate`](#cli-命令-moss-tts-nano-generate)
   - [CLI 命令：`moss-tts-nano serve`](#cli-命令-moss-tts-nano-serve)
   - [微调](#微调)
@@ -181,6 +183,49 @@ moss-tts-nano serve
 微调教程已经提供。
 
 具体见 [./finetuning/README_zh.md](./finetuning/README_zh.md)。
+
+<a id="onnx-cpu-version"></a>
+
+## ONNX CPU 版本
+
+仓库现在也包含一套可独立运行的 ONNX Runtime CPU 推理入口，复用了浏览器导出的 ONNX 资产，并保留语音克隆工作流。
+
+如果不传 `--model-dir`，程序会默认检查 `./models`。当该目录下缺少模型时，会在首次运行时自动从下面两个 Hugging Face 仓库下载：
+
+- [OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX)
+- [OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX)
+
+默认下载后的目录结构为：
+
+- `models/MOSS-TTS-Nano-100M-ONNX`
+- `models/MOSS-Audio-Tokenizer-Nano-ONNX`
+
+命令行示例：
+
+```bash
+python infer_onnx.py \
+  --prompt-audio-path assets/audio/zh_1.wav \
+  --text "欢迎使用 ONNX Runtime CPU 版本。"
+```
+
+如果你已经有本地导出的 ONNX 目录，也可以显式传入：
+
+```bash
+python infer_onnx.py \
+  --model-dir /path/to/models \
+  --prompt-audio-path assets/audio/zh_1.wav \
+  --text "欢迎使用 ONNX Runtime CPU 版本。"
+```
+
+本地 Web Demo：
+
+```bash
+python app_onnx.py
+```
+
+然后在浏览器中打开 `http://127.0.0.1:18083`。
+
+首次启动如果本地没有 ONNX 权重，会先自动下载。
 
 ## MOSS-Audio-Tokenizer-Nano
 

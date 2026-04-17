@@ -20,6 +20,7 @@ dependencies = [
   "torchaudio==2.7.0",
   "transformers==4.57.1",
   "uvicorn>=0.29.0",
+  "onnxruntime>=1.20.0",
 ]
 
 [project.urls]
@@ -34,8 +35,12 @@ moss-tts-nano = "moss_tts_nano.cli:main"
 packages = ["moss_tts_nano"]
 py-modules = [
   "app",
+  "app_onnx",
   "infer",
+  "infer_onnx",
   "moss_tts_nano_runtime",
+  "onnx_tts_runtime",
+  "ort_cpu_runtime",
   "text_normalization_pipeline",
   "tts_robust_normalizer_single_script",
 ]

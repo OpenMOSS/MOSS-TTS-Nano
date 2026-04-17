@@ -32,6 +32,7 @@ MOSS-TTS-Nano is an open-source **multilingual tiny speech generation model** fr
 
 ## News
 
+* 2026.4.17: We release a more efficient and independently runnable [**ONNX CPU Version**](#onnx-cpu-version), with `infer_onnx.py` / `app_onnx.py`, corresponding Hugging Face repositories [**MOSS-TTS-Nano-100M-ONNX**](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX) and [**MOSS-Audio-Tokenizer-Nano-ONNX**](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX), while preserving voice cloning, direct reference-audio input, and `Realtime Streaming Decode`.
 * 2026.4.16: We release the **MOSS-TTS-Nano finetuning code**. See [./finetuning/README.md](./finetuning/README.md) for training and usage details.
 * 2026.4.14: We release [**MOSS-TTS-Nano-Reader**](https://github.com/OpenMOSS/MOSS-TTS-Nano-Reader), a local browser reading application built on top of **MOSS-TTS-Nano**.
 * 2026.4.10: We release **MOSS-TTS-Nano**. A demo Space is available at [OpenMOSS-Team/MOSS-TTS-Nano](https://huggingface.co/spaces/OpenMOSS-Team/MOSS-TTS-Nano). You can also view the demo and more details at [openmoss.github.io/MOSS-TTS-Nano-Demo/](https://openmoss.github.io/MOSS-TTS-Nano-Demo/).
@@ -52,6 +53,7 @@ MOSS-TTS-Nano is an open-source **multilingual tiny speech generation model** fr
   - [Environment Setup](#environment-setup)
   - [Voice Clone with `infer.py`](#voice-clone-with-inferpy)
   - [Local Web Demo with `app.py`](#local-web-demo-with-apppy)
+  - [ONNX CPU Inference](#onnx-cpu-version)
   - [CLI Command: `moss-tts-nano generate`](#cli-command-moss-tts-nano-generate)
   - [CLI Command: `moss-tts-nano serve`](#cli-command-moss-tts-nano-serve)
   - [Finetuning](#finetuning)
@@ -154,6 +156,51 @@ python app.py
 ```
 
 Then open `http://127.0.0.1:18083` in your browser.
+
+<a id="onnx-cpu-version"></a>
+
+### ONNX CPU Inference
+
+This repository also includes a standalone ONNX Runtime CPU path that reuses the browser-exported ONNX assets while keeping the same voice cloning workflow.
+
+If `--model-dir` is omitted, the script automatically checks `./models`. When the model files are missing, it downloads them on first run from:
+
+- [OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX)
+- [OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX)
+
+Downloaded files are stored under:
+
+- `models/MOSS-TTS-Nano-100M-ONNX`
+- `models/MOSS-Audio-Tokenizer-Nano-ONNX`
+
+Example:
+
+```bash
+python infer_onnx.py \
+  --prompt-audio-path assets/audio/zh_1.wav \
+  --text "Welcome to the ONNX Runtime CPU demo."
+```
+
+If you already have the ONNX assets in another directory, pass it explicitly:
+
+```bash
+python infer_onnx.py \
+  --model-dir /path/to/models \
+  --prompt-audio-path assets/audio/zh_1.wav \
+  --text "Welcome to the ONNX Runtime CPU demo."
+```
+
+### ONNX Local Web Demo with `app_onnx.py`
+
+You can also launch the ONNX-backed local web demo:
+
+```bash
+python app_onnx.py
+```
+
+Then open `http://127.0.0.1:18083` in your browser.
+
+The first startup may spend extra time downloading assets if `models/` does not contain the ONNX weights yet.
 
 ### CLI Command: `moss-tts-nano generate`
 
