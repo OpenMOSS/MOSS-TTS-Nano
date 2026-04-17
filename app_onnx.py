@@ -490,6 +490,7 @@ def _render_index_html_onnx(
         warmup_status=warmup_status,
         text_normalization_status=text_normalization_status,
     )
+    html = html.replace("MOSS-TTS-Nano Demo", "MOSS-TTS-Nano ONNX Demo")
     html = html.replace(
         '<label for="attn-implementation">Attention Backend</label>\n'
         '              <select id="attn-implementation">\n'
@@ -582,6 +583,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             f"{DEFAULT_BROWSER_ONNX_MODEL_DIR} and auto-downloads the ONNX assets on first run."
         ),
     )
+    parser.add_argument(
+        "--output-dir",
+        default=str(APP_DIR / "generated_audio"),
+        help="Directory for generated wav files.",
+    )
     parser.add_argument("--host", type=str, default="localhost")
     parser.add_argument("--port", type=int, default=18083)
     parser.add_argument("--cpu-threads", type=int, default=max(1, int(os.cpu_count() or 1)))
@@ -599,9 +605,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     text_normalizer_manager = WeTextProcessingManager()
     text_normalizer_manager.start()
+    output_dir = Path(args.output_dir).expanduser().resolve()
     runtime = OnnxNanoTTSServiceAdapter(
         model_dir=args.model_dir,
-        output_dir=APP_DIR / "generated_audio",
+        output_dir=output_dir,
         cpu_threads=args.cpu_threads,
         max_new_frames=args.max_new_frames,
         text_normalizer_manager=text_normalizer_manager,
@@ -610,7 +617,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     warmup_manager.start()
 
     OnnxRequestRuntimeManager._factory_model_dir = runtime.model_dir
-    OnnxRequestRuntimeManager._factory_output_dir = (APP_DIR / "generated_audio").resolve()
+    OnnxRequestRuntimeManager._factory_output_dir = output_dir
     OnnxRequestRuntimeManager._factory_max_new_frames = int(args.max_new_frames)
     OnnxRequestRuntimeManager._factory_text_normalizer_manager = text_normalizer_manager
     legacy_app.RequestRuntimeManager = OnnxRequestRuntimeManager
@@ -623,6 +630,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         logging.warning("--share is ignored by the FastAPI-based ONNX app.")
 
     app = legacy_app._build_app(runtime, warmup_manager, text_normalizer_manager, root_path)
+    app.title = "MOSS-TTS-Nano ONNX Demo"
     uvicorn.run(
         app,
         host=args.host,

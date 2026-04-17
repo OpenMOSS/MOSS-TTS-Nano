@@ -32,7 +32,7 @@ MOSS-TTS-Nano is an open-source **multilingual tiny speech generation model** fr
 
 ## News
 
-* 2026.4.17: We release a more efficient and independently runnable [**ONNX CPU Version**](#onnx-cpu-version), with `infer_onnx.py` / `app_onnx.py`, corresponding Hugging Face repositories [**MOSS-TTS-Nano-100M-ONNX**](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX) and [**MOSS-Audio-Tokenizer-Nano-ONNX**](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX), while preserving voice cloning, direct reference-audio input, and `Realtime Streaming Decode`.
+* 2026.4.17: We are excited to release a more efficient and fully standalone [**ONNX CPU Version**](#onnx-cpu-version), backed by the Hugging Face repositories [**MOSS-TTS-Nano-100M-ONNX**](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX) and [**MOSS-Audio-Tokenizer-Nano-ONNX**](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX). It preserves the full voice cloning workflow while removing the PyTorch dependency during inference. In our tests, it delivers nearly **2x** the processing efficiency of the original version, and runs smoothly on a **single CPU core** on a **MacBook Air M4**. Built on top of this ONNX CPU version, we have also updated [**MOSS-TTS-Nano-Reader**](https://github.com/OpenMOSS/MOSS-TTS-Nano-Reader), which can now run the model directly inside the browser as an extension, without requiring a separate local inference service.
 * 2026.4.16: We release the **MOSS-TTS-Nano finetuning code**. See [./finetuning/README.md](./finetuning/README.md) for training and usage details.
 * 2026.4.14: We release [**MOSS-TTS-Nano-Reader**](https://github.com/OpenMOSS/MOSS-TTS-Nano-Reader), a local browser reading application built on top of **MOSS-TTS-Nano**.
 * 2026.4.10: We release **MOSS-TTS-Nano**. A demo Space is available at [OpenMOSS-Team/MOSS-TTS-Nano](https://huggingface.co/spaces/OpenMOSS-Team/MOSS-TTS-Nano). You can also view the demo and more details at [openmoss.github.io/MOSS-TTS-Nano-Demo/](https://openmoss.github.io/MOSS-TTS-Nano-Demo/).
@@ -161,7 +161,17 @@ Then open `http://127.0.0.1:18083` in your browser.
 
 ### ONNX CPU Inference
 
-This repository also includes a standalone ONNX Runtime CPU path that reuses the browser-exported ONNX assets while keeping the same voice cloning workflow.
+We now strongly recommend trying the **ONNX CPU version** first for lightweight local deployment and CPU inference.
+
+This version is designed to be more deployment-friendly while keeping the same core MOSS-TTS-Nano experience:
+
+- **No PyTorch dependency during inference**: it runs directly on ONNX Runtime CPU.
+- **Fully standalone CPU deployment**: suitable for local demos, services, and lightweight integration.
+- **Feature-complete voice cloning workflow**: supports direct reference audio input, built-in voices, and `Realtime Streaming Decode`.
+- **Faster in practice**: in our tests, processing efficiency is nearly **2x** that of the original version.
+- **Strong single-core usability**: on a **MacBook Air M4**, we observed smooth inference with only **1 CPU core**.
+
+The ONNX entrypoints are `infer_onnx.py`, `app_onnx.py`, and the packaged CLI with `--backend onnx`.
 
 If `--model-dir` is omitted, the script automatically checks `./models`. When the model files are missing, it downloads them on first run from:
 
@@ -212,6 +222,15 @@ moss-tts-nano generate \
   --text "欢迎关注模思智能、上海创智学院与复旦大学自然语言处理实验室。"
 ```
 
+For the ONNX CPU backend, add `--backend onnx`:
+
+```bash
+moss-tts-nano generate \
+  --backend onnx \
+  --prompt-speech assets/audio/zh_1.wav \
+  --text "欢迎关注模思智能、上海创智学院与复旦大学自然语言处理实验室。"
+```
+
 Useful notes:
 
 - `moss-tts-nano generate` writes to `generated_audio/moss_tts_nano_output.wav` by default.
@@ -224,6 +243,13 @@ You can also launch the web demo through the packaged CLI:
 
 ```bash
 moss-tts-nano serve
+```
+
+For the ONNX web demo:
+
+```bash
+moss-tts-nano serve \
+  --backend onnx
 ```
 
 This command forwards to `app.py`, keeps the model loaded in memory, and serves the local browser demo plus HTTP generation endpoints.

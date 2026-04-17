@@ -29,7 +29,7 @@ MOSS-TTS-Nano 是来自 [MOSI.AI](https://mosi.cn/#hero) 和 [OpenMOSS 团队](h
 
 ## 新闻
 
-* 2026.4.17：我们发布了更加高效且可独立运行的 [**ONNX CPU 版本**](#onnx-cpu-version)，支持 `infer_onnx.py` / `app_onnx.py`、对应 Hugging Face 仓库 [**MOSS-TTS-Nano-100M-ONNX**](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX) 与 [**MOSS-Audio-Tokenizer-Nano-ONNX**](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX)，保留音色克隆、直接参考音频输入与 `Realtime Streaming Decode`。
+* 2026.4.17：我们很高兴发布更加高效且可独立运行的 [**ONNX CPU 版本**](#onnx-cpu-version)，对应 Hugging Face 仓库 [**MOSS-TTS-Nano-100M-ONNX**](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX) 与 [**MOSS-Audio-Tokenizer-Nano-ONNX**](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX)。该版本在推理阶段不再依赖 PyTorch，完整保留音色克隆工作流；根据我们的实测，其处理效率较原版接近翻倍，并且在 **MacBook Air M4** 上仅使用 **1 核 CPU** 即可流畅运行。基于这一 ONNX CPU 版本，我们也同步更新了 [**MOSS-TTS-Nano-Reader**](https://github.com/OpenMOSS/MOSS-TTS-Nano-Reader)，现在可以直接以浏览器插件的形式在浏览器内运行本模型，无需再在本地单独部署推理服务。
 * 2026.4.16：我们发布了 **MOSS-TTS-Nano 微调代码**。训练和使用说明见 [./finetuning/README_zh.md](./finetuning/README_zh.md)。
 * 2026.4.14：我们发布了 [**MOSS-TTS-Nano-Reader**](https://github.com/OpenMOSS/MOSS-TTS-Nano-Reader)，这是一个基于 **MOSS-TTS-Nano** 的本地浏览器网页朗读应用。
 * 2026.4.10：我们发布了 **MOSS-TTS-Nano**。演示 Space 已在 [OpenMOSS-Team/MOSS-TTS-Nano](https://huggingface.co/spaces/OpenMOSS-Team/MOSS-TTS-Nano) 上线，也可以通过 [openmoss.github.io/MOSS-TTS-Nano-Demo/](https://openmoss.github.io/MOSS-TTS-Nano-Demo/) 查看 demo 和更多细节。
@@ -162,6 +162,15 @@ moss-tts-nano generate \
   --text "欢迎关注模思智能、上海创智学院与复旦大学自然语言处理实验室。"
 ```
 
+如果要切到 ONNX CPU 后端，只需加上 `--backend onnx`：
+
+```bash
+moss-tts-nano generate \
+  --backend onnx \
+  --prompt-speech assets/audio/zh_1.wav \
+  --text "欢迎关注模思智能、上海创智学院与复旦大学自然语言处理实验室。"
+```
+
 有用的提示：
 
 - `moss-tts-nano generate` 默认写入 `generated_audio/moss_tts_nano_output.wav`。
@@ -176,6 +185,13 @@ moss-tts-nano generate \
 moss-tts-nano serve
 ```
 
+如果要启动 ONNX Web Demo：
+
+```bash
+moss-tts-nano serve \
+  --backend onnx
+```
+
 此命令转发到 `app.py`，将模型保持在内存中加载，并为本地浏览器演示和 HTTP 生成端点提供服务。
 
 ### 微调
@@ -188,7 +204,17 @@ moss-tts-nano serve
 
 ## ONNX CPU 版本
 
-仓库现在也包含一套可独立运行的 ONNX Runtime CPU 推理入口，复用了浏览器导出的 ONNX 资产，并保留语音克隆工作流。
+我们现在十分推荐优先尝试 **ONNX CPU 版本**，尤其适合轻量本地部署和纯 CPU 推理场景。
+
+这一版本在保留 MOSS-TTS-Nano 核心体验的同时，更适合直接部署：
+
+- **推理阶段不依赖 PyTorch**：直接基于 ONNX Runtime CPU 运行。
+- **可独立运行、部署更轻量**：适合本地 demo、服务化和轻量集成。
+- **完整保留语音克隆能力**：支持直接参考音频输入、内置音色和 `Realtime Streaming Decode`。
+- **速度更快**：根据我们的实测，处理效率较原版**接近翻倍**。
+- **单核可用性更强**：在 **MacBook Air M4** 上，仅使用 **1 核 CPU** 即可流畅运行。
+
+对应的 ONNX 入口包括 `infer_onnx.py`、`app_onnx.py`，以及带 `--backend onnx` 的打包 CLI。
 
 如果不传 `--model-dir`，程序会默认检查 `./models`。当该目录下缺少模型时，会在首次运行时自动从下面两个 Hugging Face 仓库下载：
 

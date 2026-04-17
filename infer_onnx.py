@@ -76,6 +76,18 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--cpu-threads", type=int, default=4, help="onnxruntime intra-op thread count.")
     parser.add_argument("--max-new-frames", type=int, default=375, help="Maximum generated audio frames.")
     parser.add_argument("--voice-clone-max-text-tokens", type=int, default=75, help="Chunk long text by token budget.")
+    parser.add_argument("--text-temperature", type=float, default=1.0, help="Text-layer sampling temperature.")
+    parser.add_argument("--text-top-p", type=float, default=1.0, help="Text-layer top-p sampling.")
+    parser.add_argument("--text-top-k", type=int, default=50, help="Text-layer top-k sampling.")
+    parser.add_argument("--audio-temperature", type=float, default=0.8, help="Audio-layer sampling temperature.")
+    parser.add_argument("--audio-top-p", type=float, default=0.95, help="Audio-layer top-p sampling.")
+    parser.add_argument("--audio-top-k", type=int, default=25, help="Audio-layer top-k sampling.")
+    parser.add_argument(
+        "--audio-repetition-penalty",
+        type=float,
+        default=1.2,
+        help="Audio-layer repetition penalty.",
+    )
     parser.add_argument(
         "--enable-wetext-processing",
         type=int,
@@ -140,6 +152,14 @@ def main(argv: Optional[Sequence[str]] = None) -> dict[str, object]:
         do_sample=bool(args.do_sample),
         sample_mode=args.sample_mode,
     )
+    generation_defaults = runtime.manifest["generation_defaults"]
+    generation_defaults["text_temperature"] = float(args.text_temperature)
+    generation_defaults["text_top_p"] = float(args.text_top_p)
+    generation_defaults["text_top_k"] = int(args.text_top_k)
+    generation_defaults["audio_temperature"] = float(args.audio_temperature)
+    generation_defaults["audio_top_p"] = float(args.audio_top_p)
+    generation_defaults["audio_top_k"] = int(args.audio_top_k)
+    generation_defaults["audio_repetition_penalty"] = float(args.audio_repetition_penalty)
     raw_text = resolve_text(args)
     enable_wetext = bool(args.enable_wetext_processing) and not bool(args.disable_wetext_processing)
     enable_normalize_tts_text = bool(args.enable_normalize_tts_text) and not bool(args.disable_normalize_tts_text)
