@@ -36,7 +36,10 @@ from openai_audio_api import (
     SpeechRequest,
     iter_pcm_audio,
     make_error_response,
+    preprocess_tts_input,
     resolve_voice,
+    start_opus_encoder,
+    _resample_pcm,
     _wav_header_bytes,
 )
 from text_normalization_pipeline import (
@@ -2853,6 +2856,7 @@ def _build_app(
         import pydantic
 
         # 1. Parse & validate request body
+        raw_body: bytes = await request.body()
         try:
             body = await request.json()
             speech_req = SpeechRequest(**body)
@@ -2860,6 +2864,12 @@ def _build_app(
             # Return the first validation error as OpenAI-format JSON
             first_err = exc.errors()[0]
             param = first_err.get("loc", [None])[-1]
+            logging.warning(
+                "OpenAI /v1/audio/speech validation error: headers=%s body=%s errors=%s",
+                dict(request.headers),
+                raw_body.decode("utf-8", errors="replace")[:512],
+                exc.errors(),
+            )
             return JSONResponse(
                 status_code=400,
                 content=make_error_response(
@@ -2868,6 +2878,12 @@ def _build_app(
                 )[0],
             )
         except Exception as exc:
+            logging.warning(
+                "OpenAI /v1/audio/speech body parse error: headers=%s body=%s error=%s",
+                dict(request.headers),
+                raw_body.decode("utf-8", errors="replace")[:512],
+                exc,
+            )
             return JSONResponse(
                 status_code=400,
                 content=make_error_response(
@@ -2878,15 +2894,23 @@ def _build_app(
         request_start = time.monotonic()
 
         logging.info(
-            "OpenAI /v1/audio/speech request: model=%s input=%r voice=%s response_format=%s speed=%s",
-            speech_req.model,
-            speech_req.input[:80] + ("..." if len(speech_req.input) > 80 else ""),
-            speech_req.voice,
-            speech_req.response_format,
-            speech_req.speed,
+            "OpenAI /v1/audio/speech request: headers=%s body=%s",
+            dict(request.headers),
+            raw_body.decode("utf-8", errors="replace")[:1024],
         )
 
-        # 2. Validate input length
+        # 2. Preprocess input: strip emoji/kaomoji, normalize newlines to pauses
+        original_input = speech_req.input
+        speech_req = speech_req.model_copy(
+            update={"input": preprocess_tts_input(speech_req.input)},
+        )
+        logging.info(
+            "OpenAI /v1/audio/speech stage=preprocess before=%r after=%r",
+            original_input,
+            speech_req.input,
+        )
+
+        # 3. Validate input length
         if len(speech_req.input) > 4096:
             err_body, status = make_error_response(
                 message="input text exceeds maximum length of 4096 characters.",
@@ -2894,10 +2918,10 @@ def _build_app(
             )
             return JSONResponse(status_code=status, content=err_body)
 
-        # 3. Resolve voice name (OpenAI name → MOSS preset, or passthrough)
+        # 4. Resolve voice name (OpenAI name → MOSS preset, or passthrough)
         moss_voice = resolve_voice(speech_req.voice)
 
-        # 4. Prepare text
+        # 5. Prepare text
         try:
             prepared_texts = shared_prepare_tts_request_texts(
                 text=speech_req.input,
@@ -2916,7 +2940,27 @@ def _build_app(
                 )[0],
             )
 
-        # 5. Ensure warmup
+        tts_text = str(prepared_texts["text"])
+        logging.info(
+            "OpenAI /v1/audio/speech stage=final_text len=%d method=%s lang=%s text=%r",
+            len(tts_text),
+            prepared_texts.get("normalization_method", "?"),
+            prepared_texts.get("text_normalization_language", "?"),
+            tts_text,
+        )
+
+        # 6. Pre-split text into chunks for per-chunk synthesis.
+        #    This prevents content loss from model batch inference by
+        #    synthesizing each chunk independently and verifying output.
+        tts_text_chunks = runtime_manager.default_runtime.split_voice_clone_text(
+            text=tts_text, voice_clone_max_text_tokens=30,
+        )
+        logging.info(
+            "OpenAI /v1/audio/speech stage=chunks count=%d chunks=%r",
+            len(tts_text_chunks), tts_text_chunks,
+        )
+
+        # 7. Ensure warmup
         warmup_snapshot = warmup_manager.snapshot()
         if not warmup_snapshot.ready:
             warmup_snapshot = warmup_manager.ensure_ready()
@@ -2930,7 +2974,7 @@ def _build_app(
                     )[0],
                 )
 
-        # 6. Build streaming response via background thread + queue
+        # 8. Build streaming response via background thread + queue
         #    This avoids holding _cpu_execution_lock inside the ASGI
         #    streaming iterator (which can deadlock on client disconnect).
         response_format = speech_req.response_format
@@ -2961,20 +3005,33 @@ def _build_app(
                         mode="voice_clone",
                         voice=moss_voice,
                         prompt_audio_path=None,
+                        voice_clone_max_text_tokens=30,
+                        voice_clone_max_memory_per_sample_gb=0.6,
+                        max_new_frames=200,
+                        tts_max_batch_size=7,
+                        codec_max_batch_size=7,
                     ),
                 )
                 audio_chunks = 0
+                tts_gen_start = time.monotonic()
+                first_pcm_at: float | None = None
+                last_pcm_at: float | None = None
+                speed = speech_req.speed
                 if response_format == "wav":
                     header_sent = False
                     for pcm, sample_rate, channels in iter_pcm_audio(events_gen):
                         if client_disconnected.is_set():
                             return
                         audio_chunks += 1
+                        now = time.monotonic()
+                        if first_pcm_at is None:
+                            first_pcm_at = now
+                        last_pcm_at = now
                         if not header_sent:
                             if not _put(_wav_header_bytes(sample_rate, channels)):
                                 return
                             header_sent = True
-                        if not _put(pcm):
+                        if not _put(_resample_pcm(pcm, speed, channels)):
                             return
                 elif response_format == "mp3":
                     encoder = None
@@ -2982,6 +3039,10 @@ def _build_app(
                         if client_disconnected.is_set():
                             return
                         audio_chunks += 1
+                        now = time.monotonic()
+                        if first_pcm_at is None:
+                            first_pcm_at = now
+                        last_pcm_at = now
                         if encoder is None:
                             import lameenc
                             encoder = lameenc.Encoder()
@@ -2989,26 +3050,112 @@ def _build_app(
                             encoder.set_in_sample_rate(sample_rate)
                             encoder.set_channels(channels)
                             encoder.set_quality(2)
-                        if not _put(bytes(encoder.encode(pcm))):
+                        if not _put(bytes(encoder.encode(_resample_pcm(pcm, speed, channels)))):
                             return
                     if encoder is not None:
                         flush = encoder.flush()
                         if flush:
-                            _put(bytes(flush))
+                            if not _put(bytes(flush)):
+                                pass  # client disconnected, best effort
+                elif response_format == "opus":
+                    import subprocess as _sp
+                    import threading as _threading_mod
+
+                    opus_proc = None
+                    opus_reader_thread = None
+                    opus_stderr_chunks: list[bytes] = []
+                    opus_output_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=64)
+
+                    def _read_opus_stdout(proc: _sp.Popen):
+                        try:
+                            while True:
+                                block = proc.stdout.read(8192)
+                                if not block:
+                                    break
+                                opus_output_queue.put(block)
+                        finally:
+                            opus_output_queue.put(None)
+
+                    def _read_opus_stderr(proc: _sp.Popen):
+                        try:
+                            while True:
+                                chunk = proc.stderr.read(4096)
+                                if not chunk:
+                                    break
+                                opus_stderr_chunks.append(chunk)
+                        except Exception:
+                            pass
+
+                    try:
+                        for pcm, sample_rate, channels in iter_pcm_audio(events_gen):
+                            if client_disconnected.is_set():
+                                break
+                            audio_chunks += 1
+                            now = time.monotonic()
+                            if first_pcm_at is None:
+                                first_pcm_at = now
+                            last_pcm_at = now
+                            if opus_proc is None:
+                                opus_proc = start_opus_encoder(sample_rate, channels, speed=speed)
+                                opus_reader_thread = _threading_mod.Thread(
+                                    target=_read_opus_stdout, args=(opus_proc,), daemon=True,
+                                )
+                                opus_reader_thread.start()
+                                _stderr_thread = _threading_mod.Thread(
+                                    target=_read_opus_stderr, args=(opus_proc,), daemon=True,
+                                )
+                                _stderr_thread.start()
+                            try:
+                                opus_proc.stdin.write(pcm)
+                            except BrokenPipeError:
+                                break
+
+                        if opus_proc is not None:
+                            try:
+                                opus_proc.stdin.close()
+                            except BrokenPipeError:
+                                pass
+
+                            while True:
+                                block = opus_output_queue.get(timeout=30)
+                                if block is None:
+                                    break
+                                if not _put(block):
+                                    break
+
+                            if opus_reader_thread is not None:
+                                opus_reader_thread.join(timeout=10)
+                            rc = opus_proc.wait(timeout=10)
+                            if rc != 0:
+                                stderr_output = b"".join(opus_stderr_chunks).decode("utf-8", errors="replace")
+                                logging.error(
+                                    "Opus ffmpeg exited with rc=%d stderr=%s",
+                                    rc, stderr_output[:500],
+                                )
+                    except Exception:
+                        logging.exception("Opus encoding failed")
+                        raise
                 else:  # pcm
-                    for pcm, _, _ in iter_pcm_audio(events_gen):
+                    for pcm, _, pcm_ch in iter_pcm_audio(events_gen):
                         if client_disconnected.is_set():
                             return
                         audio_chunks += 1
-                        if not _put(pcm):
+                        now = time.monotonic()
+                        if first_pcm_at is None:
+                            first_pcm_at = now
+                        last_pcm_at = now
+                        if not _put(_resample_pcm(pcm, speed, pcm_ch)):
                             return
             except Exception:
                 logging.exception("TTS thread failed for OpenAI /v1/audio/speech")
             finally:
                 elapsed = time.monotonic() - request_start
+                gen_elapsed = (last_pcm_at or time.monotonic()) - tts_gen_start
+                first_pcm_elapsed = (first_pcm_at - tts_gen_start) if first_pcm_at else None
                 logging.info(
-                    "OpenAI /v1/audio/speech complete: format=%s audio_chunks=%d elapsed=%.2fs",
-                    response_format, audio_chunks, elapsed,
+                    "OpenAI /v1/audio/speech complete: format=%s audio_chunks=%d elapsed=%.2fs tts_gen=%.2fs first_pcm=%s",
+                    response_format, audio_chunks, elapsed, gen_elapsed,
+                    f"{first_pcm_elapsed:.2f}s" if first_pcm_elapsed else "n/a",
                 )
                 # Explicitly close the events generator to release
                 # _cpu_execution_lock held by iter_with_runtime.

@@ -32,6 +32,8 @@ _DEFAULT_VOICE_FILES: dict[str, tuple[str, str]] = {
     "Bella": ("en_3.wav", "English female voice B"),
     "Adam": ("en_4.wav", "English male voice A"),
     "Yui": ("jp_2.wav", "Japanese female voice B"),
+    "男播音": ("zh_10.wav", "Chinese male broadcaster voice"),
+    "杨幂": ("zh_11.wav", "Chinese female voice YangMi style"),
 }
 
 DEFAULT_VOICE = "Junhao"

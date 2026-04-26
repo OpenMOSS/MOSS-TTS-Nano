@@ -352,30 +352,41 @@ class OrtCpuRuntime:
         return ort.InferenceSession(str(path_value), sess_options=options, providers=["CPUExecutionProvider"])
 
     def _create_sessions(self) -> dict[str, ort.InferenceSession]:
+        return self._create_sessions_with_threads(self.thread_count)
+
+    def _create_sessions_with_threads(self, thread_count: int) -> dict[str, ort.InferenceSession]:
+        """Create ONNX sessions with a specific intra-op thread count."""
+        def _make_session(path_value: Path) -> ort.InferenceSession:
+            options = ort.SessionOptions()
+            options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            options.intra_op_num_threads = max(1, int(thread_count))
+            options.inter_op_num_threads = 1
+            return ort.InferenceSession(str(path_value), sess_options=options, providers=["CPUExecutionProvider"])
+
         tts_dir = self.tts_meta_path.parent
         codec_dir = self.codec_meta_path.parent
         return {
-            "prefill": self._session(tts_dir / self.tts_meta["files"]["prefill"]),
-            "decode": self._session(tts_dir / self.tts_meta["files"]["decode_step"]),
-            "local_decoder": self._session(tts_dir / self.tts_meta["files"]["local_decoder"]),
+            "prefill": _make_session(tts_dir / self.tts_meta["files"]["prefill"]),
+            "decode": _make_session(tts_dir / self.tts_meta["files"]["decode_step"]),
+            "local_decoder": _make_session(tts_dir / self.tts_meta["files"]["local_decoder"]),
             **(
-                {"local_greedy_frame": self._session(tts_dir / self.tts_meta["files"]["local_greedy_frame"])}
+                {"local_greedy_frame": _make_session(tts_dir / self.tts_meta["files"]["local_greedy_frame"])}
                 if self.tts_meta["files"].get("local_greedy_frame")
                 else {}
             ),
             **(
-                {"local_fixed_sampled_frame": self._session(tts_dir / self.tts_meta["files"]["local_fixed_sampled_frame"])}
+                {"local_fixed_sampled_frame": _make_session(tts_dir / self.tts_meta["files"]["local_fixed_sampled_frame"])}
                 if self.tts_meta["files"].get("local_fixed_sampled_frame")
                 else {}
             ),
             **(
-                {"local_cached_step": self._session(tts_dir / self.tts_meta["files"]["local_cached_step"])}
+                {"local_cached_step": _make_session(tts_dir / self.tts_meta["files"]["local_cached_step"])}
                 if self.tts_meta["files"].get("local_cached_step")
                 else {}
             ),
-            "codec_encode": self._session(codec_dir / self.codec_meta["files"]["encode"]),
-            "codec_decode": self._session(codec_dir / self.codec_meta["files"]["decode_full"]),
-            "codec_decode_step": self._session(codec_dir / self.codec_meta["files"]["decode_step"]),
+            "codec_encode": _make_session(codec_dir / self.codec_meta["files"]["encode"]),
+            "codec_decode": _make_session(codec_dir / self.codec_meta["files"]["decode_full"]),
+            "codec_decode_step": _make_session(codec_dir / self.codec_meta["files"]["decode_step"]),
         }
 
     def list_builtin_voices(self) -> list[dict[str, Any]]:
