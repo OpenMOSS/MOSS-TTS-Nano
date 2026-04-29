@@ -160,6 +160,41 @@ python infer.py \
 
 This writes audio to `generated_audio/infer_output.wav` by default.
 
+#### Voice cloning details
+
+A few questions come up frequently (see [#9](https://github.com/OpenMOSS/MOSS-TTS-Nano/issues/9)):
+
+1. **Can I pass the transcript of the reference audio?**
+   Yes — use `--prompt-text "<transcript>"` (or `--prompt-text-file path.txt`).
+   It is honoured by both `--mode voice_clone` (the default) and
+   `--mode continuation`. Supplying it generally improves cloning quality
+   because the model can align text-to-audio for the prompt clip.
+
+   ```bash
+   python infer.py \
+     --prompt-audio-path assets/audio/zh_1.wav \
+     --prompt-text "欢迎收听今日新闻播报。" \
+     --text "今天的天气非常好。"
+   ```
+
+2. **What length should the reference audio be?**
+   We don't enforce a hard limit — the audio tokenizer accepts arbitrary
+   lengths and the prompt is internally clipped by
+   `--max-new-frames` / `--voice-clone-max-text-tokens`. Empirically,
+   short clips (≈ 3–10 seconds) of *clean* speech tend to give the best
+   results: long clips spend more of the model's prompt budget on
+   acoustic context, and very short ones (< 2 s) often don't carry
+   enough timbre. If you see degraded output, try clipping a clean,
+   single-speaker passage at around 5 seconds.
+
+3. **How do I cache a voice profile across multiple generations?**
+   There's no separate "voice profile" object yet — the cleanest pattern
+   is to keep the model loaded in process (e.g. via `python -i infer.py`,
+   `moss-tts-nano serve`, or by reusing a `MossTtsNanoRuntime` instance
+   in your own script) and call `model.inference(...)` repeatedly with
+   the same `prompt_audio_path` and `prompt_text`. The audio tokenizer
+   will re-encode the prompt each call, but the model weights stay warm.
+
 ### Local Web Demo with `app.py`
 
 You can launch the local FastAPI demo for browser-based testing:
