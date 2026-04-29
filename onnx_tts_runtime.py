@@ -490,9 +490,26 @@ class OnnxTtsRuntime(OrtCpuRuntime):
             return self.encode_reference_audio(prompt_audio_path)
         resolved_voice = str(voice or self.list_builtin_voices()[0]["voice"])
         voice_row = next((item for item in self.list_builtin_voices() if item["voice"] == resolved_voice), None)
-        if voice_row is None:
-            raise ValueError(f"Built-in voice not found: {resolved_voice}")
-        return list(voice_row["prompt_audio_codes"])
+        if voice_row is not None:
+            return list(voice_row["prompt_audio_codes"])
+        # Fallback: try to find wav file in preset voices directory
+        from moss_tts_nano.defaults import DEFAULT_PROMPT_AUDIO_DIR
+        wav_candidates = [
+            DEFAULT_PROMPT_AUDIO_DIR / f"{resolved_voice}.wav",
+            DEFAULT_PROMPT_AUDIO_DIR / f"{resolved_voice}_reference.wav",
+        ]
+        # Also check the PyTorch preset map for wav filename
+        try:
+            from moss_tts_nano_runtime import _DEFAULT_VOICE_FILES
+            if resolved_voice in _DEFAULT_VOICE_FILES:
+                wav_candidates.insert(0, DEFAULT_PROMPT_AUDIO_DIR / _DEFAULT_VOICE_FILES[resolved_voice][0])
+        except ImportError:
+            pass
+        for wav_path in wav_candidates:
+            if wav_path.exists():
+                logging.info("ONNX voice %r not in builtin manifest, encoding from %s", resolved_voice, wav_path)
+                return self.encode_reference_audio(wav_path)
+        raise ValueError(f"Built-in voice not found: {resolved_voice}")
 
     def decode_full_audio_safe(self, generated_frames: list[list[int]]) -> np.ndarray:
         try:

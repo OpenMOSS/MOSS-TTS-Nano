@@ -25,21 +25,15 @@ MOSS_AUDIO_TOKENIZER_TYPE = "moss-audio-tokenizer-nano"
 
 _DEFAULT_VOICE_FILES: dict[str, tuple[str, str]] = {
     "Junhao": ("zh_1.wav", "Chinese male voice A"),
-    "Zhiming": ("zh_2.wav", "Chinese male voice B"),
-    "Weiguo": ("zh_5.wav", "Chinese male voice C"),
     "Xiaoyu": ("zh_3.wav", "Chinese female voice A"),
     "Yuewen": ("zh_4.wav", "Chinese female voice B"),
     "Lingyu": ("zh_6.wav", "Chinese female voice C"),
-    "Trump": ("en_1.wav", "Trump reference voice"),
     "Ava": ("en_2.wav", "English female voice A"),
     "Bella": ("en_3.wav", "English female voice B"),
     "Adam": ("en_4.wav", "English male voice A"),
-    "Nathan": ("en_5.wav", "English male voice B"),
-    "Sakura": ("jp_1.mp3", "Japanese female voice A"),
     "Yui": ("jp_2.wav", "Japanese female voice B"),
-    "Aoi": ("jp_3.wav", "Japanese female voice C"),
-    "Hina": ("jp_4.wav", "Japanese female voice D"),
-    "Mei": ("jp_5.wav", "Japanese female voice E"),
+    "男播音": ("zh_10.wav", "Chinese male broadcaster voice"),
+    "杨幂": ("zh_11.wav", "Chinese female voice YangMi style"),
 }
 
 DEFAULT_VOICE = "Junhao"

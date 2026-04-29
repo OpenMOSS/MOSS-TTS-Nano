@@ -21,6 +21,7 @@ dependencies = [
   "transformers==4.57.1",
   "uvicorn>=0.29.0",
   "onnxruntime>=1.20.0",
+  "lameenc>=1.7.0",
 ]
 
 [project.urls]
@@ -39,6 +40,7 @@ py-modules = [
   "infer",
   "infer_onnx",
   "moss_tts_nano_runtime",
+  "openai_audio_api",
   "onnx_tts_runtime",
   "ort_cpu_runtime",
   "text_normalization_pipeline",

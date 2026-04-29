@@ -297,7 +297,31 @@ def maybe_print_voice_clone_text_chunks(
         print()
 
 
+def _patch_torchaudio_backend() -> None:
+    """Patch torchaudio to avoid the SoX backend, which segfaults on some systems."""
+    try:
+        import torchaudio
+        _original_load = torchaudio.load
+        _original_save = torchaudio.save
+
+        def _load_with_soundfile(uri, *args, backend=None, **kwargs):
+            if backend is None:
+                backend = "soundfile"
+            return _original_load(uri, *args, backend=backend, **kwargs)
+
+        def _save_with_soundfile(uri, src, sample_rate, *args, backend=None, **kwargs):
+            if backend is None:
+                backend = "soundfile"
+            return _original_save(uri, src, sample_rate, *args, backend=backend, **kwargs)
+
+        torchaudio.load = _load_with_soundfile
+        torchaudio.save = _save_with_soundfile
+    except ImportError:
+        pass
+
+
 def main(argv: Optional[Sequence[str]] = None) -> dict[str, object]:
+    _patch_torchaudio_backend()
     set_logging()
     args = parse_args(argv)
     if args.debug == 1:

@@ -10,3 +10,4 @@ uvicorn>=0.29.0
 WeTextProcessing>=1.0.4.1
 soundfile
 onnxruntime>=1.20.0
+lameenc>=1.7.0
