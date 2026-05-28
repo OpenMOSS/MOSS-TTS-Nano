@@ -60,6 +60,7 @@ MOSS-TTS-Nano 是来自 [MOSI.AI](https://mosi.cn/#hero) 和 [OpenMOSS 团队](h
     - [使用 `infer.py` 进行语音克隆](#使用-inferpy-进行语音克隆)
     - [使用 `app.py` 启动本地 Web 演示](#使用-apppy-启动本地-web-演示)
   - [ONNX CPU 版本](#onnx-cpu-版本)
+    - [Android ONNX Runtime 示例](#android-onnx-runtime-示例)
     - [导出仅 TTS 的 ONNX 权重](#导出仅-tts-的-onnx-权重)
     - [CLI 命令：`moss-tts-nano generate`](#cli-命令moss-tts-nano-generate)
     - [CLI 命令：`moss-tts-nano serve`](#cli-命令moss-tts-nano-serve)
@@ -247,6 +248,12 @@ python app_onnx.py \
 然后在浏览器中打开 `http://127.0.0.1:18083`。
 
 首次启动如果本地没有 ONNX 权重，会先自动下载。
+
+### Android ONNX Runtime 示例
+
+Android ONNX Runtime smoke 示例位于 [`examples/android_onnx_runtime`](./examples/android_onnx_runtime)。
+
+该示例会在 Android 设备端加载导出的 MOSS-TTS-Nano ONNX 图和 MOSS-Audio-Tokenizer-Nano ONNX 解码器，合成短的预分词 demo prompt，并写出 WAV 文件。示例刻意保持最小化，并将模型文件保留在 APK 外部，便于本地测试。
 
 ### 导出仅 TTS 的 ONNX 权重
 

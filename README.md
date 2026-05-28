@@ -61,6 +61,7 @@ MOSS-TTS-Nano is an open-source **multilingual tiny speech generation model** fr
     - [Local Web Demo with `app.py`](#local-web-demo-with-apppy)
     - [ONNX CPU Inference](#onnx-cpu-inference)
     - [ONNX Local Web Demo with `app_onnx.py`](#onnx-local-web-demo-with-app_onnxpy)
+    - [Android ONNX Runtime Example](#android-onnx-runtime-example)
     - [Export TTS-only ONNX Weights](#export-tts-only-onnx-weights)
     - [CLI Command: `moss-tts-nano generate`](#cli-command-moss-tts-nano-generate)
     - [CLI Command: `moss-tts-nano serve`](#cli-command-moss-tts-nano-serve)
@@ -252,6 +253,12 @@ python app_onnx.py \
 Then open `http://127.0.0.1:18083` in your browser.
 
 The first startup may spend extra time downloading assets if `models/` does not contain the ONNX weights yet.
+
+### Android ONNX Runtime Example
+
+An Android ONNX Runtime smoke example is available under [`examples/android_onnx_runtime`](./examples/android_onnx_runtime).
+
+The example loads the exported MOSS-TTS-Nano ONNX graphs and the MOSS-Audio-Tokenizer-Nano ONNX decoder on device, synthesizes short pre-tokenized demo prompts, and writes a WAV file from Android. It is intentionally minimal and keeps model files outside the APK for local testing.
 
 ### Export TTS-only ONNX Weights
 
