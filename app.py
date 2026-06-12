@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
 import io
 import json
@@ -21,6 +22,7 @@ import numpy as np
 import torch
 import uvicorn
 from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
 from moss_tts_nano_runtime import (
@@ -154,7 +156,7 @@ class WarmupSnapshot:
 
 
 class WarmupManager:
-    def __init__(self, runtime: NanoTTSService, text_normalizer_manager: "WeTextProcessingManager | None" = None) -> None:
+    def __init__(self, runtime: NanoTTSService, text_normalizer_manager: SharedWeTextProcessingManager | None = None) -> None:
         self.runtime = runtime
         self.text_normalizer_manager = text_normalizer_manager
         self._lock = threading.Lock()
@@ -657,6 +659,22 @@ async def _persist_uploaded_prompt_audio(upload: UploadFile | None) -> tuple[str
     return temp_path, _format_uploaded_prompt_display_name(original_filename)
 
 
+def _resolve_device_info(runtime: NanoTTSService) -> dict[str, str]:
+    device_type = str(runtime.device.type).lower()
+    gpu_name = ""
+    if device_type == "cuda":
+        try:
+            gpu_index = runtime.device.index or 0
+            gpu_name = torch.cuda.get_device_name(gpu_index)
+        except Exception:
+            gpu_name = "CUDA GPU"
+    return {
+        "device_type": device_type,
+        "gpu_name": gpu_name,
+        "device_label": f"GPU — {gpu_name}" if gpu_name else device_type.upper(),
+    }
+
+
 def _render_index_html(
     *,
     request: Request,
@@ -1043,6 +1061,43 @@ def _render_index_html(
         gap: 14px;
       }
     }
+    .device-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 10px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      line-height: 1;
+      border: 1px solid;
+    }
+    .device-badge.gpu {
+      background: linear-gradient(135deg, rgba(34, 197, 94, 0.10) 0%, rgba(16, 185, 129, 0.08) 100%);
+      color: #15803d;
+      border-color: rgba(34, 197, 94, 0.30);
+    }
+    .device-badge.cpu {
+      background: linear-gradient(135deg, rgba(234, 179, 8, 0.10) 0%, rgba(245, 158, 11, 0.08) 100%);
+      color: #a16207;
+      border-color: rgba(234, 179, 8, 0.30);
+    }
+    .device-badge .device-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .device-badge.gpu .device-dot {
+      background: #22c55e;
+      box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+    }
+    .device-badge.cpu .device-dot {
+      background: #eab308;
+      box-shadow: 0 0 6px rgba(234, 179, 8, 0.5);
+    }
   </style>
 </head>
 <body>
@@ -1055,6 +1110,10 @@ def _render_index_html(
         <li><strong>Voice Presets</strong> - Choose built-in demos from <code>assets/demo.jsonl</code>.</li>
       </ul>
       <p class="build-note">Built with <a href="https://github.com/OpenMOSS/MOSS-TTS-Nano" target="_blank" rel="noopener noreferrer">MOSS-TTS-Nano</a>.</p>
+      <div id="device-badge" class="device-badge __DEVICE_BADGE_CLASS__">
+        <span class="device-dot"></span>
+        <span id="device-badge-label">__DEVICE_LABEL__</span>
+      </div>
       <div class="top-tabs" role="tablist" aria-label="Demo mode">
         <button class="top-tab active" type="button" aria-selected="true">Voice Clone</button>
       </div>
@@ -1074,8 +1133,8 @@ def _render_index_html(
             <audio id="prompt-audio-preview" controls hidden></audio>
             <div id="prompt-audio-source" class="meta">Using the selected demo prompt speech.</div>
             <div class="prompt-audio-actions">
-              <button id="choose-prompt-audio-btn" class="secondary" type="button" hidden>选择文件</button>
-              <button id="clear-prompt-audio-btn" class="secondary" type="button" hidden>使用 Demo 音频</button>
+              <button id="choose-prompt-audio-btn" class="secondary" type="button" hidden>Select File</button>
+              <button id="clear-prompt-audio-btn" class="secondary" type="button" hidden>Use Demo Audio</button>
             </div>
           </div>
         </div>
@@ -1090,17 +1149,17 @@ def _render_index_html(
           <div class="row" style="margin-top: 12px;">
             <div class="field">
               <label for="max-new-frames">Max New Frames</label>
-              <input id="max-new-frames" type="number" min="64" max="1024" step="1" value="375">
+              <input id="max-new-frames" type="number" min="64" max="1024" step="1" value="200">
             </div>
             <div class="field">
               <label for="voice-clone-max-text-tokens">Voice Clone Max Text Tokens</label>
-              <input id="voice-clone-max-text-tokens" type="number" min="25" max="200" step="1" value="75">
+              <input id="voice-clone-max-text-tokens" type="number" min="25" max="200" step="1" value="40">
             </div>
           </div>
           <div class="row">
             <div class="field">
               <label for="tts-max-batch-size">Max TTS Batch Size (0=auto)</label>
-              <input id="tts-max-batch-size" type="number" min="0" step="1" value="1">
+              <input id="tts-max-batch-size" type="number" min="0" step="1" value="0">
             </div>
             <div class="field">
               <label for="codec-max-batch-size">Max Codec Batch Size (0=auto)</label>
@@ -1116,8 +1175,8 @@ def _render_index_html(
             <label for="cpu-thread-count">CPU Threads</label>
             <input id="cpu-thread-count" type="number" min="1" step="1" value="4">
           </div>
-          <div class="meta">
-            This app is CPU-only. CPU Threads maps to torch.set_num_threads for that request.
+          <div id="cpu-threads-meta" class="meta">
+            __CPU_THREADS_META__
           </div>
           <div class="row">
             <div class="field">
@@ -1240,6 +1299,8 @@ def _render_index_html(
     const DEFAULT_DEMO_ID = __DEFAULT_DEMO_ID__;
     const DEFAULT_ATTN_IMPLEMENTATION = __DEFAULT_ATTN_IMPLEMENTATION__;
     const DEFAULT_CPU_THREADS = __DEFAULT_CPU_THREADS__;
+    const DEVICE_TYPE = __DEVICE_TYPE__;
+    const DEVICE_LABEL = __DEVICE_LABEL__;
 
     const demoSelect = document.getElementById("demo");
     const promptAudioUploadInput = document.getElementById("prompt-audio-upload");
@@ -1314,7 +1375,7 @@ def _render_index_html(
       return `${APP_BASE}/api/demo-prompt-audio/${encodeURIComponent(demoId)}`;
     }
 
-    function showPromptAudioFilePicker(message = "选择文件 | 未选择任何文件") {
+    function showPromptAudioFilePicker(message = "Select File | No File Selected") {
       promptAudioPreview.pause();
       promptAudioPreview.removeAttribute("src");
       promptAudioPreview.load();
@@ -1846,6 +1907,15 @@ def _render_index_html(
       updatePauseButtonState();
     }
 
+    function updateDeviceBadge(deviceType, deviceLabel) {
+      const badge = document.getElementById("device-badge");
+      const label = document.getElementById("device-badge-label");
+      if (!badge || !label) return;
+      const isGpu = deviceType === "cuda";
+      badge.className = "device-badge " + (isGpu ? "gpu" : "cpu");
+      label.textContent = deviceLabel || (isGpu ? "GPU" : "CPU");
+    }
+
     async function refreshWarmupStatus() {
       try {
         const [warmupData, normalizationData] = await Promise.all([
@@ -1858,6 +1928,9 @@ def _render_index_html(
           normalizationData.status_text || "Unknown status.",
           Boolean(normalizationData.failed)
         );
+        if (warmupData.device_type) {
+          updateDeviceBadge(warmupData.device_type, warmupData.device_label);
+        }
       } catch (error) {
         setStatus(warmupStatus, String(error), true);
         setStatus(textNormalizationStatus, String(error), true);
@@ -1953,7 +2026,7 @@ def _render_index_html(
 
       currentStreamStatusTimer = window.setInterval(() => {
         updateStreamStatus().catch(() => {});
-      }, 500);
+      }, 2000);
       await updateStreamStatus();
 
       const response = await fetch(startData.audio_url, {
@@ -2140,7 +2213,7 @@ def _render_index_html(
     updatePauseButtonState();
     applySelectedDemo(true);
     refreshWarmupStatus();
-    window.setInterval(refreshWarmupStatus, 5000);
+    window.setInterval(refreshWarmupStatus, 30000);
   </script>
 </body>
 </html>
@@ -2154,12 +2227,23 @@ def _render_index_html(
         }
         for demo_entry in demo_entries
     ]
+    device_info = _resolve_device_info(runtime)
+    is_gpu = device_info["device_type"] == "cuda"
+    cpu_threads_meta = (
+        "CPU Threads maps to torch.set_num_threads for CPU-bound operations."
+        if is_gpu
+        else "Running on CPU. CPU Threads maps to torch.set_num_threads for that request."
+    )
     replacements = {
         "__APP_BASE__": json.dumps(base_path),
         "__DEMOS__": json.dumps(demos_payload, ensure_ascii=False),
         "__DEFAULT_DEMO_ID__": json.dumps(demo_entries[0].demo_id if demo_entries else ""),
         "__DEFAULT_ATTN_IMPLEMENTATION__": json.dumps(runtime.attn_implementation or "model_default"),
         "__DEFAULT_CPU_THREADS__": json.dumps(max(1, int(os.cpu_count() or 1))),
+        "__DEVICE_TYPE__": json.dumps(device_info["device_type"]),
+        "__DEVICE_LABEL__": json.dumps(device_info["device_label"]),
+        "__DEVICE_BADGE_CLASS__": "gpu" if is_gpu else "cpu",
+        "__CPU_THREADS_META__": cpu_threads_meta,
         "__WARMUP_STATUS__": warmup_status,
         "__TEXT_NORMALIZATION_STATUS__": text_normalization_status,
         "__CHECKPOINT__": str(runtime.checkpoint_path),
@@ -2173,10 +2257,20 @@ def _render_index_html(
 def _build_app(
     runtime: NanoTTSService,
     warmup_manager: WarmupManager,
-    text_normalizer_manager: WeTextProcessingManager | None,
+    text_normalizer_manager: SharedWeTextProcessingManager | None,
     root_path: str | None,
 ) -> FastAPI:
     app = FastAPI(title="MOSS-TTS-Nano Demo", root_path=root_path or "")
+
+    # Allow cross-origin requests so a LiveKit agent on another server can call in.
+    # Lock down allowed_origins to your LiveKit server's domain in production.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+    )
+
     stream_jobs = StreamingJobManager()
     runtime_manager = RequestRuntimeManager(runtime)
     demo_entries = _load_demo_entries()
@@ -2194,7 +2288,7 @@ def _build_app(
 
         try:
             chunks, _, _ = runtime_manager.call_with_runtime(
-                requested_execution_device="cpu",
+                requested_execution_device="default",
                 cpu_threads=cpu_threads,
                 callback=lambda selected_runtime: selected_runtime.split_voice_clone_text(
                     text=normalized_text,
@@ -2304,8 +2398,15 @@ def _build_app(
         audio_repetition_penalty: float,
         seed: int | None,
     ) -> None:
+        # Wall-clock deadline — guards against bfloat16 logit instability
+        # (NaN/Inf logits on Blackwell GPUs cause infinite generation loops).
+        # If synthesis takes longer than this, we hard-fail the job instead of
+        # pegging the GPU and freezing the machine.
+        _MAX_GENERATION_SECONDS = 60.0
+        _generation_start = time.monotonic()
+
         try:
-            initial_execution_label = "cpu"
+            initial_execution_label = "default"
             with job.lock:
                 job.started_at = time.monotonic()
                 job.state = "running"
@@ -2334,10 +2435,26 @@ def _build_app(
                 )
 
             for event, resolved_execution_device, resolved_cpu_threads in runtime_manager.iter_with_runtime(
-                requested_execution_device="cpu",
+                requested_execution_device="default",
                 cpu_threads=cpu_threads,
                 factory=_stream_factory,
             ):
+                # --- Timeout guard: kill runaway bfloat16 generation loops ---
+                _elapsed = time.monotonic() - _generation_start
+                if _elapsed > _MAX_GENERATION_SECONDS:
+                    _timeout_msg = (
+                        f"Generation timeout after {_elapsed:.1f}s — "
+                        "possible NaN/Inf logit instability (bfloat16). "
+                        "Restart with --dtype float16 to fix."
+                    )
+                    logging.error("[Timeout] %s", _timeout_msg)
+                    with job.lock:
+                        job.state = "failed"
+                        job.error = _timeout_msg
+                        job.completed_at = time.monotonic()
+                        job.run_status = f"Stream failed: timeout"
+                    break
+
                 event_type = str(event.get("type", ""))
                 with job.lock:
                     if job.is_closed:
@@ -2345,6 +2462,26 @@ def _build_app(
 
                 if event_type == "audio":
                     waveform_numpy = np.asarray(event["waveform_numpy"], dtype=np.float32)
+
+                    # --- NaN/Inf guard: detect degenerate logits early ---
+                    # bfloat16 overflow on Blackwell GPUs produces NaN/Inf waveforms.
+                    # Catching it here prevents forwarding garbage audio to the client
+                    # and allows the job to fail cleanly rather than loop forever.
+                    if not np.isfinite(waveform_numpy).all():
+                        _nan_count = int(np.sum(~np.isfinite(waveform_numpy)))
+                        _nan_msg = (
+                            f"Non-finite audio waveform detected ({_nan_count} samples). "
+                            "This is a bfloat16 logit instability on the GPU. "
+                            "Restart with --dtype float16 to fix."
+                        )
+                        logging.error("[NaN Guard] %s", _nan_msg)
+                        with job.lock:
+                            job.state = "failed"
+                            job.error = _nan_msg
+                            job.completed_at = time.monotonic()
+                            job.run_status = f"Stream failed: NaN/Inf waveform"
+                        break
+
                     pcm_bytes = _audio_to_pcm16le_bytes(waveform_numpy)
                     if not pcm_bytes:
                         continue
@@ -2451,6 +2588,7 @@ def _build_app(
     @app.get("/api/warmup-status")
     async def warmup_status():
         snapshot = warmup_manager.snapshot()
+        device_info = _resolve_device_info(runtime)
         return {
             "state": snapshot.state,
             "progress": snapshot.progress,
@@ -2459,6 +2597,9 @@ def _build_app(
             "ready": snapshot.ready,
             "failed": snapshot.failed,
             "status_text": _warmup_status_text(snapshot),
+            "device_type": device_info["device_type"],
+            "device_label": device_info["device_label"],
+            "gpu_name": device_info["gpu_name"],
         }
 
     @app.get("/api/text-normalization-status")
@@ -2594,7 +2735,7 @@ def _build_app(
             thread.start()
             prompt_audio_cleanup_path = None
 
-            initial_execution_label = "cpu"
+            initial_execution_label = "default"
 
             return {
                 "stream_id": job.stream_id,
@@ -2790,10 +2931,18 @@ def _build_app(
                     seed=normalized_seed,
                 )
 
-            result, resolved_execution_device, resolved_cpu_threads = runtime_manager.call_with_runtime(
-                requested_execution_device="cpu",
-                cpu_threads=cpu_threads,
-                callback=_synthesize,
+            def _run_synthesis_in_thread():
+                return runtime_manager.call_with_runtime(
+                    requested_execution_device="default",
+                    cpu_threads=cpu_threads,
+                    callback=_synthesize,
+                )
+
+            # Run the blocking TTS inference in a thread-pool executor so we
+            # don't block the uvicorn async event loop and cause a deadlock.
+            loop = asyncio.get_running_loop()
+            result, resolved_execution_device, resolved_cpu_threads = await loop.run_in_executor(
+                None, _run_synthesis_in_thread
             )
             result["execution_device"] = resolved_execution_device
             result["prompt_audio_display_path"] = prompt_audio_display_path
@@ -2847,7 +2996,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         default=str(DEFAULT_AUDIO_TOKENIZER_PATH),
     )
     parser.add_argument("--output-dir", "--output_dir", dest="output_dir", type=str, default=str(DEFAULT_OUTPUT_DIR))
-    parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "auto"])
+    parser.add_argument("--device", type=str, default="auto", choices=["cpu", "auto"])
     parser.add_argument("--dtype", type=str, default="auto", choices=["auto", "float32", "float16", "bfloat16"])
     parser.add_argument(
         "--attn-implementation",
@@ -2862,14 +3011,30 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     parser.add_argument("--share", action="store_true")
     args = parser.parse_args(argv)
 
+    # Render / Railway inject $PORT at runtime. Override --port if $PORT is set
+    # (handles cases where conda run strips the CLI arg or env substitution fails).
+    env_port = os.getenv("PORT")
+    if env_port:
+        try:
+            args.port = int(env_port)
+        except ValueError:
+            pass
+
     logging.basicConfig(
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         level=logging.INFO,
     )
 
-    resolved_runtime_device = "cpu"
-    if args.device != "cpu":
-        logging.info("CPU-only app mode: ignoring --device=%s and forcing cpu.", args.device)
+    if args.device == "auto":
+        if torch.cuda.is_available():
+            resolved_runtime_device = "cuda"
+            logging.info("GPU detected: %s. Running on CUDA.", torch.cuda.get_device_name(0))
+        else:
+            resolved_runtime_device = "cpu"
+            logging.info("No GPU detected. Running on CPU.")
+    else:
+        resolved_runtime_device = args.device
+        logging.info("Device explicitly set to: %s", resolved_runtime_device)
 
     runtime = NanoTTSService(
         checkpoint_path=args.checkpoint_path,
@@ -2887,6 +3052,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     vscode_proxy_uri = os.getenv("VSCODE_PROXY_URI", "")
     root_path = _resolve_vscode_root_path(vscode_proxy_uri, args.port)
     logging.info("root_path=%s", root_path)
+    logging.info("binding on host=%s port=%s", args.host, args.port)
     if args.share:
         logging.warning("--share is ignored by the FastAPI-based Nano-TTS app.")
 
