@@ -25,6 +25,9 @@ class SimpleSentencePieceTokenizer private constructor(
         .groupBy { (_, piece) -> piece.text[0] }
 
     fun encode(text: String): IntArray {
+        if (text.isBlank()) {
+            return IntArray(0)
+        }
         val normalized = normalize(text)
         if (normalized.isEmpty()) {
             return IntArray(0)

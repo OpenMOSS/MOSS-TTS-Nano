@@ -85,7 +85,7 @@ MossOnnxDemoEngine(
 }
 ```
 
-The tokenizer intentionally implements only the inference-time pieces needed by the exported Nano `tokenizer.model`: NFKC normalization, whitespace escaping, Unigram segmentation, and BPE merge ranking. If you replace the tokenizer model with a different SentencePiece configuration, compare its output against the Python tokenizer first.
+The tokenizer intentionally implements only the inference-time pieces needed by the exported Nano `tokenizer.model`: Java NFKC-style normalization, whitespace escaping, Unigram segmentation, and BPE merge ranking. It does not interpret the full SentencePiece `precompiled_charsmap`, so compare its output against the Python tokenizer first if you replace the tokenizer model or rely on unusual normalization rules.
 
 ## Notes
 
@@ -93,4 +93,4 @@ The tokenizer intentionally implements only the inference-time pieces needed by 
 - The demo caps generation to `maxFrames = 160` for faster smoke testing.
 - The decoded ONNX codec output is stereo; this example averages channels and writes a mono WAV for simplicity.
 - Keep the model files outside the APK for local testing. Bundling them into app assets is possible but increases APK size substantially.
-- Unit tests use a handcrafted tokenizer fixture by default. To compare against a real Nano tokenizer locally, set `MOSS_TOKENIZER_MODEL=/path/to/tokenizer.model` before running `:app:testDebugUnitTest`.
+- Unit tests use a handcrafted tokenizer fixture by default. To compare against a real Nano tokenizer locally, run `MOSS_TOKENIZER_MODEL=/path/to/tokenizer.model ./gradlew :app:testDebugUnitTest --rerun-tasks`.

@@ -26,6 +26,19 @@ class SimpleSentencePieceTokenizerTest {
     }
 
     @Test
+    fun blankTextEncodesToNoTokens() {
+        val tokenizer = SimpleSentencePieceTokenizer.fromModelBytes(
+            buildModel(
+                piece("<unk>", 0f, 2),
+                piece("▁", -0.1f),
+            ),
+        )
+
+        assertArrayEquals(IntArray(0), tokenizer.encode(""))
+        assertArrayEquals(IntArray(0), tokenizer.encode("  \n\t  "))
+    }
+
+    @Test
     fun prefersTheHighestScoredUnigramPath() {
         val tokenizer = SimpleSentencePieceTokenizer.fromModelBytes(
             buildModel(
