@@ -258,7 +258,7 @@ The first startup may spend extra time downloading assets if `models/` does not 
 
 An Android ONNX Runtime smoke example is available under [`examples/android_onnx_runtime`](./examples/android_onnx_runtime).
 
-The example loads the exported MOSS-TTS-Nano ONNX graphs and the MOSS-Audio-Tokenizer-Nano ONNX decoder on device, synthesizes short pre-tokenized demo prompts, and writes a WAV file from Android. It is intentionally minimal and keeps model files outside the APK for local testing.
+The example loads the exported MOSS-TTS-Nano ONNX graphs and the MOSS-Audio-Tokenizer-Nano ONNX decoder on device, tokenizes custom text with a small Kotlin tokenizer, and writes a WAV file from Android. It is intentionally minimal and keeps model files outside the APK for local testing.
 
 ### Export TTS-only ONNX Weights
 
