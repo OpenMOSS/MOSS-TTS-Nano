@@ -13,6 +13,7 @@ authors = [
 ]
 dependencies = [
   "numpy>=1.24",
+  "soundfile>=0.12.0",
   "fastapi>=0.110.0",
   "python-multipart>=0.0.9",
   "sentencepiece>=0.1.99",
