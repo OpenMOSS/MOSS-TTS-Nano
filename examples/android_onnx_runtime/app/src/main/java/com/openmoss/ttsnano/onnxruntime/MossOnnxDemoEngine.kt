@@ -30,6 +30,9 @@ class MossOnnxDemoEngine(
     private val codecMeta = CodecMeta.fromJson(readJson(codecMetaPath))
     private val ttsDir = ttsMetaPath.parentFile ?: manifestDir
     private val codecDir = codecMetaPath.parentFile ?: manifestDir
+    private val textTokenizer by lazy {
+        SimpleSentencePieceTokenizer.fromFile(File(ttsDir, "tokenizer.model"))
+    }
     private val sessionOptions = OrtSession.SessionOptions().apply {
         setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
         setIntraOpNumThreads(cpuThreads.coerceAtLeast(1))
@@ -62,6 +65,22 @@ class MossOnnxDemoEngine(
             sampleRate = sampleRate,
             durationMs = (pcm.size.toDouble() / sampleRate * 1000.0).toLong(),
             elapsedMs = elapsedMs,
+        )
+    }
+
+    fun synthesizeText(
+        text: String,
+        outputFile: File = File(outputDir, "moss_tts_nano_android_custom.wav"),
+        voice: String = "Junhao",
+        maxFrames: Int = 160,
+        seed: Long = 1234L,
+    ): SynthesisResult {
+        return synthesize(
+            textTokenIds = textTokenizer.encode(text),
+            outputFile = outputFile,
+            voice = voice,
+            maxFrames = maxFrames,
+            seed = seed,
         )
     }
 

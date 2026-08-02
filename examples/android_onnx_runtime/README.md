@@ -9,7 +9,7 @@ It intentionally stays minimal:
 - no model files committed to git
 - no app-specific business logic
 
-The demo synthesizes two pre-tokenized prompts so the ONNX path can be tested without adding a large SentencePiece JNI dependency to the first Android example.
+The demo includes a small pure Kotlin tokenizer for `tokenizer.model`, so you can synthesize custom text directly on Android without adding a SentencePiece JNI dependency.
 
 ## Model Files
 
@@ -58,7 +58,7 @@ adb push MOSS-Audio-Tokenizer-Nano-ONNX \
 
 Open `examples/android_onnx_runtime` in Android Studio, connect a device, and run the `app` configuration.
 
-Tap either demo button. The app writes a WAV file to its cache directory and prints the output path on screen.
+Type custom text and tap `Generate custom text WAV`, or tap either pre-tokenized demo button. The app writes a WAV file to its cache directory and prints the output path on screen.
 
 The sample uses:
 
@@ -69,15 +69,23 @@ The sample uses:
 
 ## Custom Text
 
-For custom text input, tokenize with `tokenizer.model` using the same SentencePiece model used by the Python ONNX runtime, then pass the resulting token ids into `MossOnnxDemoEngine.synthesize`.
+Custom text is handled by `SimpleSentencePieceTokenizer`, which reads the exported `tokenizer.model` and returns the text token ids used by `MossOnnxDemoEngine.synthesize`.
 
-For a production Android app, add one of the following tokenizer paths:
+You can also call the engine directly:
 
-- a small SentencePiece JNI wrapper
-- a pre-tokenization service or build step
-- another Android-compatible SentencePiece implementation
+```kotlin
+MossOnnxDemoEngine(
+    modelRoot = modelRoot,
+    outputDir = cacheDir,
+).use { engine ->
+    engine.synthesizeText(
+        text = "Hello world!",
+        outputFile = File(cacheDir, "custom.wav"),
+    )
+}
+```
 
-The ONNX Runtime code is independent from the tokenizer as long as it receives the correct `IntArray` token ids.
+The tokenizer intentionally implements only the inference-time pieces needed by the exported Nano `tokenizer.model`: Java NFKC-style normalization, whitespace escaping, Unigram segmentation, and BPE merge ranking. It does not interpret the full SentencePiece `precompiled_charsmap`, so compare its output against the Python tokenizer first if you replace the tokenizer model or rely on unusual normalization rules.
 
 ## Notes
 
@@ -85,3 +93,4 @@ The ONNX Runtime code is independent from the tokenizer as long as it receives t
 - The demo caps generation to `maxFrames = 160` for faster smoke testing.
 - The decoded ONNX codec output is stereo; this example averages channels and writes a mono WAV for simplicity.
 - Keep the model files outside the APK for local testing. Bundling them into app assets is possible but increases APK size substantially.
+- Unit tests use a handcrafted tokenizer fixture by default. To compare against a real Nano tokenizer locally, run `MOSS_TOKENIZER_MODEL=/path/to/tokenizer.model ./gradlew :app:testDebugUnitTest --rerun-tasks`.

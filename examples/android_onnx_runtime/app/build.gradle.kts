@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.testing.Test
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -27,4 +29,10 @@ android {
 
 dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+
+    testImplementation("junit:junit:4.13.2")
+}
+
+tasks.withType<Test>().configureEach {
+    inputs.property("MOSS_TOKENIZER_MODEL", System.getenv("MOSS_TOKENIZER_MODEL").orEmpty())
 }

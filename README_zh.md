@@ -257,7 +257,7 @@ python app_onnx.py \
 
 Android ONNX Runtime smoke 示例位于 [`examples/android_onnx_runtime`](./examples/android_onnx_runtime)。
 
-该示例会在 Android 设备端加载导出的 MOSS-TTS-Nano ONNX 图和 MOSS-Audio-Tokenizer-Nano ONNX 解码器，合成短的预分词 demo prompt，并写出 WAV 文件。示例刻意保持最小化，并将模型文件保留在 APK 外部，便于本地测试。
+该示例会在 Android 设备端加载导出的 MOSS-TTS-Nano ONNX 图和 MOSS-Audio-Tokenizer-Nano ONNX 解码器，通过小型 Kotlin tokenizer 对自定义文本分词，并写出 WAV 文件。示例刻意保持最小化，并将模型文件保留在 APK 外部，便于本地测试。
 
 ### 导出仅 TTS 的 ONNX 权重
 
