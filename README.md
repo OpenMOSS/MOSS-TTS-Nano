@@ -490,4 +490,4 @@ If you use the MOSS-TTS work in your research or product, please cite:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=OpenMOSS/MOSS-TTS-Nano&type=Date)](https://star-history.com/#OpenMOSS/MOSS-TTS-Nano&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=OpenMOSS/MOSS-TTS-Nano&type=Date)](https://star-history.dera.page/#OpenMOSS/MOSS-TTS-Nano&Date)
