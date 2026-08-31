@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import shutil
 import time
 import wave
@@ -9,8 +10,11 @@ from typing import Any, Sequence
 
 import numpy as np
 import sentencepiece as spm
-import torch
-import torchaudio
+
+try:
+    import soundfile as _sf
+except ImportError:  # optional: only needed for reference-audio voice cloning
+    _sf = None
 
 from moss_tts_nano.defaults import DEFAULT_OUTPUT_DIR
 from text_normalization_pipeline import WeTextProcessingManager, prepare_tts_request_texts
@@ -47,6 +51,55 @@ MODEL_MANIFEST_CANDIDATE_RELATIVE_PATHS = (
     "MOSS-TTS-Nano-100M-ONNX/browser_poc_manifest.json",
     "MOSS-TTS-Nano-ONNX-CPU/browser_poc_manifest.json",
 )
+
+
+def _resample_waveform(waveform: np.ndarray, orig_sample_rate: int, new_sample_rate: int) -> np.ndarray:
+    """Resample a (channels, time) float32 waveform to a new sample rate.
+
+    Pure-NumPy polyphase windowed-sinc resampling (Hann-windowed, 32 taps per
+    side), the same interpolation family ``torchaudio.functional.resample``
+    uses, so the ONNX runtime path does not require torch/torchaudio to be
+    installed.
+    """
+    if orig_sample_rate == new_sample_rate:
+        return waveform
+    gcd = math.gcd(int(orig_sample_rate), int(new_sample_rate))
+    up = int(new_sample_rate) // gcd
+    down = int(orig_sample_rate) // gcd
+    if up == 1 and down == 1:
+        return waveform
+
+    half_taps = 32
+    n_in = waveform.shape[-1]
+    n_out = int(math.ceil(n_in * up / down))
+
+    # Output sample n corresponds to input position n * down / up.
+    positions = np.arange(n_out, dtype=np.float64) * (down / up)
+    base = np.floor(positions).astype(np.int64)
+    frac = positions - base
+
+    offsets = np.arange(-half_taps + 1, half_taps + 1)  # 2 * half_taps taps
+    # Gather indices: (n_out, taps)
+    gather_idx = base[:, None] + offsets[None, :]
+    gather_idx = np.clip(gather_idx, 0, n_in - 1)
+
+    # Windowed-sinc kernel evaluated at the per-output fractional phase.
+    t = offsets[None, :].astype(np.float64) - frac[:, None]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sinc = np.where(t == 0.0, 1.0, np.sin(np.pi * t) / (np.pi * t))
+    window = 0.5 * (1.0 + np.cos(np.pi * t / half_taps))
+    kernel = sinc * window
+    # Normalize so the filter has unity DC gain for each phase.
+    kernel = kernel / kernel.sum(axis=1, keepdims=True)
+
+    channels = []
+    for ch in waveform:
+        padded = np.pad(ch, (half_taps, half_taps), mode="constant")
+        samples = padded[gather_idx + half_taps]
+        channels.append((samples * kernel).sum(axis=1))
+    out = np.stack(channels, axis=0)
+    return out.astype(np.float32, copy=False)
+
 
 
 def _resolve_model_dir_path(model_dir: str | Path | None) -> Path:
@@ -443,22 +496,33 @@ class OnnxTtsRuntime(OrtCpuRuntime):
         )
 
     def _load_reference_audio(self, reference_audio_path: str | Path) -> np.ndarray:
-        waveform, sample_rate = torchaudio.load(str(Path(reference_audio_path).expanduser().resolve()))
-        waveform = waveform.to(torch.float32)
+        if _sf is None:
+            raise ImportError(
+                "Reference-audio voice cloning requires the 'soundfile' package. "
+                "Install it with: pip install soundfile"
+            )
+        # waveform shape: (channels, time), float32 in [-1, 1] — same
+        # normalization convention as torchaudio.load().
+        data, sample_rate = _sf.read(
+            str(Path(reference_audio_path).expanduser().resolve()),
+            dtype="float32",
+            always_2d=True,
+        )
+        waveform = data.T
         target_sample_rate = int(self.codec_meta["codec_config"]["sample_rate"])
         target_channels = int(self.codec_meta["codec_config"]["channels"])
         if sample_rate != target_sample_rate:
-            waveform = torchaudio.functional.resample(waveform, sample_rate, target_sample_rate)
+            waveform = _resample_waveform(waveform, sample_rate, target_sample_rate)
         current_channels = int(waveform.shape[0])
         if current_channels == target_channels:
             pass
         elif current_channels == 1 and target_channels > 1:
-            waveform = waveform.repeat(target_channels, 1)
+            waveform = np.repeat(waveform, target_channels, axis=0)
         elif current_channels > 1 and target_channels == 1:
-            waveform = waveform.mean(dim=0, keepdim=True)
+            waveform = waveform.mean(axis=0, keepdims=True)
         else:
             raise ValueError(f"Unsupported reference audio channel conversion: {current_channels} -> {target_channels}")
-        return waveform.unsqueeze(0).detach().cpu().numpy().astype(np.float32, copy=False)
+        return np.ascontiguousarray(waveform[np.newaxis], dtype=np.float32)
 
     def encode_reference_audio(self, reference_audio_path: str | Path) -> list[list[int]]:
         waveform = self._load_reference_audio(reference_audio_path)
