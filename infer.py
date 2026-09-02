@@ -53,8 +53,18 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     text_group.add_argument("--text-file", help="Path to a UTF-8 text file to synthesize.")
 
     prompt_text_group = parser.add_mutually_exclusive_group(required=False)
-    prompt_text_group.add_argument("--prompt-text", help="Reference transcript used by continuation mode.")
-    prompt_text_group.add_argument("--prompt-text-file", help="UTF-8 reference transcript file used by continuation mode.")
+    prompt_text_group.add_argument(
+        "--prompt-text",
+        help=(
+            "Transcript of the reference audio. Used by both continuation mode and "
+            "voice_clone mode — supplying it generally improves cloning quality "
+            "because the model can align text-to-audio for the prompt clip."
+        ),
+    )
+    prompt_text_group.add_argument(
+        "--prompt-text-file",
+        help="UTF-8 file alternative to --prompt-text. Same behaviour for both modes.",
+    )
 
     parser.add_argument("--text-tokenizer-path", default=None, help="Override the checkpoint-bundled text tokenizer.")
     parser.add_argument(
