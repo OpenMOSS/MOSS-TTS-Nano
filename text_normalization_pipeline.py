@@ -210,12 +210,11 @@ def prepare_tts_request_texts(
     if enable_normalize_tts_text and enable_wetext:
         pre_robust_text = normalize_tts_text(raw_text)
         pre_robust_prompt_text = normalize_tts_text(raw_prompt_text) if raw_prompt_text else ""
-        if pre_robust_text != raw_text:
-            logging.info(
-                "normalized text chars_before=%d chars_after=%d stage=robust_pre",
-                len(raw_text),
-                len(pre_robust_text),
-            )
+        logging.info(
+            "TTS text pipeline stage=robust_pre before=%r after=%r",
+            raw_text,
+            pre_robust_text,
+        )
         if raw_prompt_text and pre_robust_prompt_text != raw_prompt_text:
             logging.info(
                 "normalized prompt_text chars_before=%d chars_after=%d stage=robust_pre",
@@ -237,9 +236,9 @@ def prepare_tts_request_texts(
             rewritten_wetext_input_prompt_text = _rewrite_hyphens_before_zh_wetext(wetext_input_prompt_text)
             if rewritten_wetext_input_text != wetext_input_text:
                 logging.info(
-                    "rewrote zh wetext text hyphens chars_before=%d chars_after=%d stage=zh_wetext_hyphen_guard",
-                    len(wetext_input_text),
-                    len(rewritten_wetext_input_text),
+                    "TTS text pipeline stage=zh_wetext_hyphen_guard before=%r after=%r",
+                    wetext_input_text,
+                    rewritten_wetext_input_text,
                 )
             if wetext_input_prompt_text and rewritten_wetext_input_prompt_text != wetext_input_prompt_text:
                 logging.info(
@@ -256,10 +255,10 @@ def prepare_tts_request_texts(
         )
         if intermediate_text != wetext_input_text:
             logging.info(
-                "normalized text chars_before=%d chars_after=%d stage=wetext language=%s",
-                len(wetext_input_text),
-                len(intermediate_text),
+                "TTS text pipeline stage=wetext lang=%s before=%r after=%r",
                 normalization_language,
+                wetext_input_text,
+                intermediate_text,
             )
         if wetext_input_prompt_text and intermediate_prompt_text != wetext_input_prompt_text:
             logging.info(
@@ -279,10 +278,10 @@ def prepare_tts_request_texts(
 
         if final_text != intermediate_text:
             logging.info(
-                "normalized text chars_before=%d chars_after=%d stage=%s",
-                len(intermediate_text),
-                len(final_text),
+                "TTS text pipeline stage=%s before=%r after=%r",
                 robust_stage_name,
+                intermediate_text,
+                final_text,
             )
         if intermediate_prompt_text and final_prompt_text != intermediate_prompt_text:
             logging.info(
