@@ -9,8 +9,7 @@ from typing import Any, Sequence
 
 import numpy as np
 import sentencepiece as spm
-import torch
-import torchaudio
+import soundfile as sf
 
 from moss_tts_nano.defaults import DEFAULT_OUTPUT_DIR
 from text_normalization_pipeline import WeTextProcessingManager, prepare_tts_request_texts
@@ -84,6 +83,27 @@ def _find_directory_with_required_names(root_dir: Path, required_names: Sequence
         if _directory_contains_all(parent, required_names):
             return parent
     return None
+
+
+def _resample_waveform_linear(waveform: np.ndarray, source_sample_rate: int, target_sample_rate: int) -> np.ndarray:
+    if source_sample_rate == target_sample_rate:
+        return waveform
+    if source_sample_rate <= 0 or target_sample_rate <= 0:
+        raise ValueError(f"Invalid sample rate conversion: {source_sample_rate} -> {target_sample_rate}")
+    sample_count = int(waveform.shape[-1])
+    if sample_count == 0:
+        return waveform
+    target_sample_count = max(1, int(round(sample_count * target_sample_rate / source_sample_rate)))
+    if sample_count == 1:
+        return np.repeat(waveform, target_sample_count, axis=-1).astype(np.float32, copy=False)
+
+    source_positions = np.arange(sample_count, dtype=np.float64)
+    target_positions = np.linspace(0, sample_count - 1, target_sample_count, dtype=np.float64)
+    resampled = np.stack(
+        [np.interp(target_positions, source_positions, channel).astype(np.float32, copy=False) for channel in waveform],
+        axis=0,
+    )
+    return resampled
 
 
 def _promote_directory_contents(source_dir: Path, target_dir: Path) -> None:
@@ -443,22 +463,26 @@ class OnnxTtsRuntime(OrtCpuRuntime):
         )
 
     def _load_reference_audio(self, reference_audio_path: str | Path) -> np.ndarray:
-        waveform, sample_rate = torchaudio.load(str(Path(reference_audio_path).expanduser().resolve()))
-        waveform = waveform.to(torch.float32)
+        waveform, sample_rate = sf.read(
+            str(Path(reference_audio_path).expanduser().resolve()),
+            dtype="float32",
+            always_2d=True,
+        )
+        waveform = waveform.T
         target_sample_rate = int(self.codec_meta["codec_config"]["sample_rate"])
         target_channels = int(self.codec_meta["codec_config"]["channels"])
         if sample_rate != target_sample_rate:
-            waveform = torchaudio.functional.resample(waveform, sample_rate, target_sample_rate)
+            waveform = _resample_waveform_linear(waveform, int(sample_rate), target_sample_rate)
         current_channels = int(waveform.shape[0])
         if current_channels == target_channels:
             pass
         elif current_channels == 1 and target_channels > 1:
-            waveform = waveform.repeat(target_channels, 1)
+            waveform = np.repeat(waveform, target_channels, axis=0)
         elif current_channels > 1 and target_channels == 1:
-            waveform = waveform.mean(dim=0, keepdim=True)
+            waveform = waveform.mean(axis=0, keepdims=True)
         else:
             raise ValueError(f"Unsupported reference audio channel conversion: {current_channels} -> {target_channels}")
-        return waveform.unsqueeze(0).detach().cpu().numpy().astype(np.float32, copy=False)
+        return waveform[np.newaxis, ...].astype(np.float32, copy=False)
 
     def encode_reference_audio(self, reference_audio_path: str | Path) -> list[list[int]]:
         waveform = self._load_reference_audio(reference_audio_path)
