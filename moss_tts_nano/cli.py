@@ -71,7 +71,12 @@ def _build_parser() -> argparse.ArgumentParser:
     generate_parser.add_argument(
         "--prompt-text",
         default=None,
-        help="PyTorch backend only. Reference transcript used by continuation mode.",
+        help=(
+            "PyTorch backend only. Transcript of the reference audio. Used by "
+            "both continuation and voice_clone modes, and supplying it "
+            "generally improves cloning quality because the model can align "
+            "text-to-audio for the prompt."
+        ),
     )
     generate_parser.add_argument(
         "--voice",
