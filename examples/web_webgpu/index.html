@@ -57,7 +57,9 @@ async function bytes(url, label) {
 }
 const inMemory = (u8) => ({ size: u8.length, slice: async (o, l) => u8.slice(o, o + l).buffer });
 
-// Text: the official runtime's light cleaning, then sentences packed into chunks of at most 75 tokens.
+// Text: the official runtime's light cleaning, then one sentence per chunk. With several sentences in one
+// chunk the model now and then ends the speech at the first full stop; a sentence of its own does not have
+// that problem. Very short sentences are joined to the next one, and nothing goes over 75 tokens.
 const END = /[.!?…。！？；;:："'」』）)\]]$/;
 function chunks(text, count, max = 75) {
   const lines = text.replace(/\r\n?/g, '\n').split('\n').map((l) => l.replace(/[ \t　]+/g, ' ').trim()).filter(Boolean)
@@ -66,7 +68,7 @@ function chunks(text, count, max = 75) {
   const out = [];
   for (const s of sentences) {
     const last = out.at(-1);
-    if (last && count(last + ' ' + s) <= max) out[out.length - 1] = last + ' ' + s; else out.push(s);
+    if (last && count(last) < 8 && count(last + ' ' + s) <= max) out[out.length - 1] = last + ' ' + s; else out.push(s);
   }
   return out;
 }

@@ -32,6 +32,6 @@ Measured on the same machine and page, prefill of a voice-cloning request plus 2
 
 ## How it works
 
-`index.html` builds the request rows the way the official runtime does (user prefix, the voice's prompt codes, the text's SentencePiece ids, the assistant prefix), runs the engine's `generaTramasGPU` (WebGPU) or `genera` (CPU) to get the frames, and decodes them with `moss_audio_tokenizer_decode_full.onnx` into 48 kHz stereo. Text is split into sentences of at most 75 tokens, as the official runtime does.
+`index.html` builds the request rows the way the official runtime does (user prefix, the voice's prompt codes, the text's SentencePiece ids, the assistant prefix), runs the engine's `generaTramasGPU` (WebGPU) or `genera` (CPU) to get the frames, and decodes them with `moss_audio_tokenizer_decode_full.onnx` into 48 kHz stereo. Text is split one sentence per chunk (at most 75 tokens): with several sentences in one chunk the model now and then ends the speech at the first full stop.
 
 Pinned versions, all at the top of the page script: the engine (`utopia-ia/elffuss-engine`), the SentencePiece tokenizer (`utopia-ia/elffuss-ai`, `sdk/audio/spm.js`), onnxruntime-web 1.30.0 and the two Hugging Face revisions.
