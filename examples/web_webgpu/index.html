@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MOSS-TTS-Nano in the browser (WebGPU)</title>
+<style>
+  :root { color-scheme: light dark; --accent: #3b6fd8; }
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
+  textarea { width: 100%; box-sizing: border-box; font: inherit; padding: .6rem; }
+  .row { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; margin: .8rem 0; }
+  button { font: inherit; padding: .5rem 1rem; border: 0; border-radius: .4rem; background: var(--accent); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #log { white-space: pre-wrap; font: 13px/1.4 ui-monospace, monospace; opacity: .85; }
+</style>
+</head>
+<body>
+<h1>MOSS-TTS-Nano in the browser</h1>
+<p>Runs entirely on this device. The transformers run on the <a href="https://github.com/utopia-ia/elffuss-engine">Elffuss engine</a>
+(WebGPU, or WebAssembly when there is no WebGPU); the audio codec runs on onnxruntime-web. Weights are read from the official
+<a href="https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX">ONNX export</a>: about 720 MB the first time, then from the browser cache.</p>
+<div class="row"><label for="voice">Voice</label> <select id="voice"></select></div>
+<textarea id="text" rows="4">Hello! This is MOSS-TTS-Nano, running on the GPU right inside your browser.</textarea>
+<div class="row"><button id="go" disabled>Loading…</button> <audio id="player" controls></audio> <a id="save" hidden download="moss-tts-nano.wav">Save WAV</a></div>
+<div id="log"></div>
+<script type="module">
+// Pinned versions. The engine and the tokenizer are Apache-2.0 (Elffuss); the weights stay in OpenMOSS's repos.
+const ENGINE = new URLSearchParams(location.search).get('engine') || 'https://cdn.jsdelivr.net/gh/utopia-ia/elffuss-engine@cd6a6c8/js/';
+const SPM = 'https://cdn.jsdelivr.net/gh/utopia-ia/elffuss-ai@fd2767a/sdk/audio/spm.js';
+const ORT = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
+const TTS = 'https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX/resolve/f52645cb/';
+const CODEC = 'https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX/resolve/ceff0d07/';
+
+const $ = (id) => document.getElementById(id);
+const log = (s) => { $('log').textContent += s + '\n'; };
+
+// Whole files, kept in the Cache API so a second visit does not download again.
+async function bytes(url, label) {
+  const cache = await caches.open('moss-tts-nano').catch(() => null);
+  let r = await cache?.match(url);
+  if (!r) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${label}: HTTP ${res.status}`);
+    const total = +res.headers.get('content-length') || 0, reader = res.body.getReader(), parts = [];
+    let got = 0, shown = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value); got += value.length;
+      if (total && got - shown > total / 10) { shown = got; $('go').textContent = `Downloading ${label} ${Math.round(got / total * 100)} %`; }
+    }
+    r = new Response(new Blob(parts));
+    // The cache is a convenience: with little disk space the browser may refuse it.
+    try { await cache?.put(url, r.clone()); } catch { log(`(${label} not cached: the browser refused the space)`); }
+  }
+  return new Uint8Array(await r.arrayBuffer());
+}
+const inMemory = (u8) => ({ size: u8.length, slice: async (o, l) => u8.slice(o, o + l).buffer });
+
+// Text: the official runtime's light cleaning, then sentences packed into chunks of at most 75 tokens.
+const END = /[.!?…。！？；;:："'」』）)\]]$/;
+function chunks(text, count, max = 75) {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n').map((l) => l.replace(/[ \t　]+/g, ' ').trim()).filter(Boolean)
+    .map((l) => (END.test(l) ? l : l + (/[぀-ヿ一-鿿]/.test(l) ? '。' : '.')));
+  const sentences = lines.join(' ').split(/(?<=[.!?…。！？])\s*/).filter((s) => s.trim());
+  const out = [];
+  for (const s of sentences) {
+    const last = out.at(-1);
+    if (last && count(last + ' ' + s) <= max) out[out.length - 1] = last + ' ' + s; else out.push(s);
+  }
+  return out;
+}
+
+// The request rows (as the official runtime builds them): user prefix, the voice's codes, the text, the assistant prefix.
+function rows(manifest, codes, ids) {
+  const c = manifest.tts_config, t = manifest.prompt_templates, W = c.n_vq + 1;
+  const before = [...t.user_prompt_prefix_token_ids, c.audio_start_token_id];
+  const after = [c.audio_end_token_id, ...t.user_prompt_after_reference_token_ids, ...ids, ...t.assistant_prompt_prefix_token_ids, c.audio_start_token_id];
+  const n = before.length + codes.length + after.length, data = new Int32Array(n * W).fill(c.audio_pad_token_id);
+  let r = 0;
+  for (const id of before) data[(r++) * W] = id;
+  for (const frame of codes) { data[r * W] = c.audio_user_slot_token_id; frame.forEach((code, q) => { data[r * W + 1 + q] = code; }); r++; }
+  for (const id of after) data[(r++) * W] = id;
+  return data;
+}
+
+function wav(left, right, rate) {
+  const n = left.length, b = new DataView(new ArrayBuffer(44 + n * 4));
+  const s = (o, t) => [...t].forEach((ch, i) => b.setUint8(o + i, ch.charCodeAt(0)));
+  s(0, 'RIFF'); b.setUint32(4, 36 + n * 4, true); s(8, 'WAVEfmt '); b.setUint32(16, 16, true); b.setUint16(20, 1, true); b.setUint16(22, 2, true);
+  b.setUint32(24, rate, true); b.setUint32(28, rate * 4, true); b.setUint16(32, 4, true); b.setUint16(34, 16, true); s(36, 'data'); b.setUint32(40, n * 4, true);
+  for (let i = 0; i < n; i++) for (const [k, ch] of [left, right].entries()) b.setInt16(44 + i * 4 + k * 2, Math.max(-1, Math.min(1, ch[i])) * 32767, true);
+  return new Blob([b], { type: 'audio/wav' });
+}
+
+let state;
+async function load() {
+  const manifest = await (await fetch(TTS + 'browser_poc_manifest.json')).json();
+  for (const v of manifest.builtin_voices) $('voice').add(new Option(`${v.group} · ${v.display_name}`, v.voice));
+  $('voice').value = 'Ava';
+  const [{ cargaVoz, cargaVozCpu }, { parseModel, createTokenizer, nmtNfkc }, ort] = await Promise.all([
+    import(ENGINE + 'provider.js'), import(SPM), import(ORT + 'ort.wasm.bundle.min.mjs')]);
+  ort.env.wasm.wasmPaths = ORT;
+  const tok = createTokenizer(parseModel(await bytes(TTS + 'tokenizer.model', 'tokenizer')), { normalize: nmtNfkc });
+  const voz = await cargaVoz();
+  const files = {
+    'moss_tts_global_shared.data': inMemory(await bytes(TTS + 'moss_tts_global_shared.data', 'global transformer')),
+    'moss_tts_local_shared.data': inMemory(await bytes(TTS + 'moss_tts_local_shared.data', 'local transformer')),
+  };
+  const fuente = voz.fuenteOnnx(files, voz.MOSS_ONNX_MAPA);
+  let gen, where;
+  const adapter = new URLSearchParams(location.search).has('cpu') ? null : await navigator.gpu?.requestAdapter();
+  if (adapter) {
+    const device = await adapter.requestDevice({ requiredLimits: { maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize } });
+    const m = await voz.cargaMoss(fuente, device);
+    gen = (r, u) => voz.generaTramasGPU(m, r, u, { max: manifest.generation_defaults.max_new_frames, lote: 8 });
+    where = 'WebGPU';
+  } else {
+    const m = await (await cargaVozCpu()).cargaMossCpu(fuente, { hilos: 1, maxFilas: 768, maxContexto: 1536 });
+    gen = (r, u) => m.genera(r, u, { max: manifest.generation_defaults.max_new_frames });
+    where = 'WebAssembly (no WebGPU here)';
+  }
+  const codecData = await bytes(CODEC + 'moss_audio_tokenizer_decode_shared.data', 'audio codec');
+  const codec = await ort.InferenceSession.create(await bytes(CODEC + 'moss_audio_tokenizer_decode_full.onnx', 'codec graph'),
+    { executionProviders: ['wasm'], externalData: [{ path: 'moss_audio_tokenizer_decode_shared.data', data: codecData }] });
+  state = { manifest, tok, gen, codec, ort };
+  log(`Ready: transformers on ${where}, codec on WebAssembly.`);
+}
+
+async function speak() {
+  const { manifest, tok, gen, codec, ort } = state;
+  const voice = manifest.builtin_voices.find((v) => v.voice === $('voice').value);
+  const parts = chunks($('text').value, (s) => tok.encode(s).length);
+  const rate = 48000, gap = new Float32Array(rate * 0.2), L = [], R = [];
+  let frames = 0, ms = 0;
+  for (const text of parts) {
+    const t0 = performance.now();
+    const got = await gen(rows(manifest, voice.prompt_audio_codes, tok.encode(text)), Math.random);
+    ms += performance.now() - t0; frames += got.length;
+    if (!got.length) continue;
+    const codes = new Int32Array(got.flat());
+    const out = await codec.run({ audio_codes: new ort.Tensor('int32', codes, [1, got.length, got[0].length]),
+      audio_code_lengths: new ort.Tensor('int32', new Int32Array([got.length]), [1]) });
+    const [, ch, n] = out.audio.dims, len = Math.min(n, Number(out.audio_lengths.data[0])), d = out.audio.data;
+    L.push(d.slice(0, len), gap); R.push(d.slice(ch > 1 ? n : 0, (ch > 1 ? n : 0) + len), gap);
+  }
+  const cat = (a) => { const o = new Float32Array(a.reduce((s, x) => s + x.length, 0)); let p = 0; for (const x of a) { o.set(x, p); p += x.length; } return o; };
+  const blob = wav(cat(L), cat(R), rate);
+  $('player').src = $('save').href = URL.createObjectURL(blob); $('save').hidden = false;
+  log(`${parts.length} chunk(s), ${frames} frames (${(frames / 12.5).toFixed(1)} s of speech) generated in ${(ms / 1000).toFixed(2)} s: ${(frames / 12.5 / (ms / 1000)).toFixed(1)}× real time.`);
+  $('player').play().catch(() => {});
+}
+
+load().then(() => { $('go').textContent = 'Speak'; $('go').disabled = false; }).catch((e) => { $('go').textContent = 'Could not load'; log(e.stack || e.message); });
+$('go').onclick = async () => { $('go').disabled = true; try { await speak(); } catch (e) { log(e.stack || e.message); } $('go').disabled = false; };
+</script>
+</body>
+</html>

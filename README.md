@@ -74,6 +74,7 @@ MOSS-TTS-Nano is an open-source **multilingual tiny speech generation model** fr
     - [ONNX CPU Inference](#onnx-cpu-inference)
     - [ONNX Local Web Demo with `app_onnx.py`](#onnx-local-web-demo-with-app_onnxpy)
     - [Android ONNX Runtime Example](#android-onnx-runtime-example)
+    - [Browser Example (WebGPU, no install)](#browser-example-webgpu-no-install)
     - [Export TTS-only ONNX Weights](#export-tts-only-onnx-weights)
     - [CLI Command: `moss-tts-nano generate`](#cli-command-moss-tts-nano-generate)
     - [CLI Command: `moss-tts-nano serve`](#cli-command-moss-tts-nano-serve)
@@ -271,6 +272,14 @@ The first startup may spend extra time downloading assets if `models/` does not 
 An Android ONNX Runtime smoke example is available under [`examples/android_onnx_runtime`](./examples/android_onnx_runtime).
 
 The example loads the exported MOSS-TTS-Nano ONNX graphs and the MOSS-Audio-Tokenizer-Nano ONNX decoder on device, synthesizes short pre-tokenized demo prompts, and writes a WAV file from Android. It is intentionally minimal and keeps model files outside the APK for local testing.
+
+### Browser Example (WebGPU, no install)
+
+A single-page browser example is available under [`examples/web_webgpu`](./examples/web_webgpu). It runs MOSS-TTS-Nano entirely on the user's device, with the transformers on WebGPU through the [Elffuss engine](https://github.com/utopia-ia/elffuss-engine) (WebAssembly when WebGPU is not available) and the audio decoder on onnxruntime-web. It reads the official ONNX weights from Hugging Face and needs nothing but a static file server:
+
+```bash
+cd examples/web_webgpu && python3 -m http.server 8000
+```
 
 ### Export TTS-only ONNX Weights
 
