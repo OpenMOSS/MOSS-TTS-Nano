@@ -2,6 +2,10 @@
 
 A single HTML page that runs MOSS-TTS-Nano entirely on the user's device: no Python, no install, no server-side inference.
 
+![The page generating 9.7 s of speech in 1.5 s on WebGPU](demo.gif)
+
+The same recording with its sound: [`demo.mp4`](demo.mp4).
+
 - The global and local transformers run on the [Elffuss engine](https://github.com/utopia-ia/elffuss-engine) (Apache-2.0): on the GPU through WebGPU, or on the CPU through WebAssembly SIMD when WebGPU is not available.
 - The audio decoder runs the official `MOSS-Audio-Tokenizer-Nano-ONNX` graph on onnxruntime-web.
 - Weights, tokenizer, built-in voices and generation defaults are read from the official Hugging Face repositories (`MOSS-TTS-Nano-100M-ONNX` and `MOSS-Audio-Tokenizer-Nano-ONNX`) at pinned revisions. Nothing is converted or re-hosted.
