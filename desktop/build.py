@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import json
 import os
 import platform
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import time
+import zipfile
 from pathlib import Path
 
 
@@ -15,11 +19,9 @@ ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "build" / "desktop"
 DIST = ROOT / "dist"
 APP_NAME = "MOSS-TTS"
-MODEL_REVISIONS = {
-    "MOSS-TTS-Nano-100M-ONNX": "f52645cb467506d8e18e746ddd59482685b74e58",
-    "MOSS-Audio-Tokenizer-Nano-ONNX": "ceff0d0749bfb3fa2d61149794ec6feef0d1e1ae",
-}
+MODEL_REVISIONS = json.loads((ROOT / "desktop" / "models.json").read_text(encoding="utf-8"))
 MODEL_PATTERNS = ("*.onnx", "*.data", "*.json", "tokenizer.model", "README.md", "LICENSE*")
+COMPRESSION_LEVEL = 3
 
 
 def fetch_models(destination: Path) -> None:
@@ -64,6 +66,20 @@ def copy_notices(destination: Path) -> None:
                 shutil.copy2(source, target)
 
 
+def archive_package(package: Path, *, windows: bool) -> Path:
+    if windows:
+        archive = package.parent / "MOSS-TTS-Nano-Windows-x86_64.zip"
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=COMPRESSION_LEVEL) as output:
+            output.write(package, package.name)
+            for path in sorted(package.rglob("*")):
+                output.write(path, path.relative_to(package.parent))
+    else:
+        archive = package.parent / "MOSS-TTS-Nano-Linux-x86_64.tar.gz"
+        with tarfile.open(archive, "w:gz", compresslevel=COMPRESSION_LEVEL) as output:
+            output.add(package, arcname=package.name)
+    return archive
+
+
 def build(models: Path, *, fetch: bool) -> Path:
     windows = sys.platform == "win32"
     if sys.platform not in {"win32", "linux"} or platform.machine().lower() not in {"amd64", "x86_64"}:
@@ -103,8 +119,9 @@ def build(models: Path, *, fetch: bool) -> Path:
         copy_notices(package)
         shutil.copy2(ROOT / "desktop" / "START-HERE.txt", package)
 
-        archive_name = f"MOSS-TTS-Nano-{'Windows' if windows else 'Linux'}-x86_64"
-        archive = Path(shutil.make_archive(str(stage / archive_name), "zip" if windows else "gztar", stage, APP_NAME))
+        started = time.perf_counter()
+        archive = archive_package(package, windows=windows)
+        print(f"Compressed {archive.name} in {time.perf_counter() - started:.1f} seconds.", flush=True)
         return archive.replace(DIST / archive.name)
 
 

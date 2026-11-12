@@ -2,7 +2,7 @@
 
 ## 使用
 
-从当前仓库的 Releases 下载对应系统的桌面包，完整解压到可写目录，再双击启动程序。
+从 [GitHub Releases](https://github.com/12-test-12/MOSS-TTS-Nano/releases) 下载对应系统的桌面包，完整解压到可写目录，再双击启动程序。
 
 | 系统 | 下载文件 | 启动程序 |
 | --- | --- | --- |
@@ -22,7 +22,9 @@ python -m desktop.build
 
 构建产物位于 `dist/`。已有本地 ONNX 模型时，可用 `--models-dir` 指向包含 `MOSS-TTS-Nano-100M-ONNX` 和 `MOSS-Audio-Tokenizer-Nano-ONNX` 两个子目录的目录。
 
-[GitHub Actions 流水线](../.github/workflows/desktop.yml)可手动运行，也会在相关变更和 `desktop-v*` 标签上触发。普通运行把压缩包留在 Actions Artifacts。标签运行在双端构建和 Linux 兼容性检查通过后，把两个包和 SHA-256 校验文件附到 Release 草稿。
+[GitHub Actions 流水线](../.github/workflows/desktop.yml)会在 `main` 上的相关变更、`v*` 或 `desktop-v*` 标签推送后运行。双端构建和 Linux 兼容性检查通过后，流水线自动公开发布两个便携包及 `SHA256SUMS.txt`。`main` 运行发布为 `desktop-<运行 ID>`，标签运行沿用该标签。手动运行默认发布，可取消勾选 `publish_release` 仅构建和验证。PR 运行可从 Actions 下载测试包。
+
+Windows 与 Linux 共用按 [模型版本](models.json) 锁定的 Actions 缓存。命中后直接使用缓存模型。两个平台以较快的压缩级别生成安装包，并直接传输成品归档。
 
 ## 平台验收
 

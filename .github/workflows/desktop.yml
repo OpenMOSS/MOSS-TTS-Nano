@@ -2,6 +2,11 @@ name: Portable desktop packages
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish verified Windows and Linux packages to GitHub Releases'
+        type: boolean
+        default: true
   pull_request:
     paths:
       - '.github/workflows/desktop.yml'
@@ -13,7 +18,7 @@ on:
       - 'tts_robust_normalizer_single_script.py'
   push:
     branches: [main]
-    tags: ['desktop-v*']
+    tags: ['v*', 'desktop-v*']
     paths:
       - '.github/workflows/desktop.yml'
       - 'desktop/**'
@@ -25,6 +30,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -64,23 +73,25 @@ jobs:
         run: |
           python -m pip install --only-binary=:all: -r desktop/requirements.txt
       - uses: actions/cache@v5
+        id: models-cache
         with:
           path: build/desktop/models
-          key: desktop-models-${{ hashFiles('desktop/build.py') }}
+          key: desktop-models-${{ hashFiles('desktop/models.json') }}
+          enableCrossOsArchive: true
       - name: Build the offline package
-        run: python -m desktop.build
+        run: python -m desktop.build ${{ steps.models-cache.outputs.cache-hit == 'true' && '--models-dir build/desktop/models' || '' }}
       - name: Test the extracted Windows package
         if: runner.os == 'Windows'
         run: python -m desktop.build --verify dist/${{ matrix.archive }}
       - name: Test the extracted Linux package
         if: runner.os == 'Linux'
         run: xvfb-run -a python -m desktop.build --verify dist/${{ matrix.archive }}
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
-          name: portable-${{ matrix.platform }}-x86_64
           path: dist/${{ matrix.archive }}
           if-no-files-found: error
-          compression-level: 0
+          archive: false
+          overwrite: true
 
   linux-compatibility:
     name: Linux smoke test (${{ matrix.image }})
@@ -107,8 +118,9 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v8
         with:
-          name: portable-Linux-x86_64
+          name: MOSS-TTS-Nano-Linux-x86_64.tar.gz
           path: dist
+          skip-decompress: true
       - name: Prepare an isolated graphical test environment
         env:
           BASE_IMAGE: ${{ matrix.image }}
@@ -124,31 +136,27 @@ jobs:
             --mount "type=bind,source=$PWD/dist,target=/packages,readonly" moss-desktop-test
 
   release:
-    name: Attach packages to a draft release
-    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    name: Publish Windows and Linux packages to GitHub Releases
+    if: >-
+      (github.event_name == 'push' &&
+       (github.ref == 'refs/heads/main' || github.ref_type == 'tag')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     needs: [build, linux-compatibility]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
-          pattern: portable-*-x86_64
+          pattern: MOSS-TTS-Nano-*-x86_64.*
           path: dist
           merge-multiple: true
-      - name: Upload Windows and Linux packages
+          skip-decompress: true
+      - name: Publish both verified archives
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          cd dist
-          sha256sum MOSS-TTS-Nano-* > SHA256SUMS.txt
-          if gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' > "$RUNNER_TEMP/desktop-release-status"; then
-            if [ "$(cat "$RUNNER_TEMP/desktop-release-status")" != true ]; then
-              echo 'The desktop release is already published.'
-              exit 0
-            fi
-            gh release upload "$GITHUB_REF_NAME" --clobber MOSS-TTS-Nano-* SHA256SUMS.txt
-          else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --generate-notes MOSS-TTS-Nano-* SHA256SUMS.txt
-          fi
+        run: bash desktop/ci/publish.sh
