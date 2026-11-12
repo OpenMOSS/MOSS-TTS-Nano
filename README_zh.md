@@ -130,6 +130,12 @@ MOSS-TTS-Nano 目前支持 **20 种语言**：
 
 ## 快速开始
 
+### Windows 和 Linux 便携版
+
+完整解压对应系统的压缩包，再双击 `MOSS-TTS.exe`（Windows）或 `MOSS-TTS`（Linux）。包内自带 Python、图形运行库和两套 ONNX 模型，首次启动即可离线使用 CPU 合成。导入的音色和生成的 WAV 会保存在同级 `data` 目录，移动软件时请移动整个文件夹。
+
+下载产物、构建和平台验收流程见[桌面版说明](desktop/README.md)。
+
 ### 环境配置
 
 我们建议先创建一个干净的 Python 环境，然后以可编辑模式安装项目，使得 `moss-tts-nano` 命令在本地可用。下面的示例故意保持参数最少，依赖仓库默认设置。默认情况下，代码加载 `OpenMOSS-Team/MOSS-TTS-Nano` 和 `OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano`。

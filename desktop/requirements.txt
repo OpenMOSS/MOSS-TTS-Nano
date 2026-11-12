@@ -1,0 +1,8 @@
+numpy==2.3.5
+onnxruntime==1.23.2
+sentencepiece==0.2.1
+soundfile==0.13.1
+soxr==1.0.0
+PySide6==6.11.3
+PyInstaller==6.22.3
+huggingface-hub>=0.34,<2

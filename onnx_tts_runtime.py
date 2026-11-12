@@ -9,8 +9,6 @@ from typing import Any, Sequence
 
 import numpy as np
 import sentencepiece as spm
-import torch
-import torchaudio
 
 from moss_tts_nano.defaults import DEFAULT_OUTPUT_DIR
 from text_normalization_pipeline import WeTextProcessingManager, prepare_tts_request_texts
@@ -304,7 +302,7 @@ class OnnxTtsRuntime(OrtCpuRuntime):
         self.output_dir.mkdir(parents=True, exist_ok=True)
         tokenizer_relative_path = str(self.manifest["model_files"].get("tokenizer_model", "tokenizer.model"))
         tokenizer_path = self.resolve_manifest_relative_path(tokenizer_relative_path)
-        self.sp_model = spm.SentencePieceProcessor(model_file=str(tokenizer_path))
+        self.sp_model = spm.SentencePieceProcessor(model_proto=tokenizer_path.read_bytes())
         self._text_normalizer_manager: WeTextProcessingManager | None = None
 
     def _ensure_text_normalizer(self, enable_wetext: bool) -> WeTextProcessingManager | None:
@@ -443,6 +441,9 @@ class OnnxTtsRuntime(OrtCpuRuntime):
         )
 
     def _load_reference_audio(self, reference_audio_path: str | Path) -> np.ndarray:
+        import torch
+        import torchaudio
+
         waveform, sample_rate = torchaudio.load(str(Path(reference_audio_path).expanduser().resolve()))
         waveform = waveform.to(torch.float32)
         target_sample_rate = int(self.codec_meta["codec_config"]["sample_rate"])

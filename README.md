@@ -131,6 +131,12 @@ MOSS-TTS-Nano currently supports **20 languages**:
 
 ## Quickstart
 
+### Portable desktop app
+
+Extract the Windows x86-64 ZIP or Linux x86-64 tar.gz and open `MOSS-TTS.exe` or `MOSS-TTS` in the extracted folder. The desktop archives include Python, the graphical runtime, and both ONNX model sets for offline CPU synthesis. Keep the whole folder together when moving the app. Imported voice samples and generated WAV files are stored in its `data` folder.
+
+See the [desktop build and release guide](desktop/README.md) for package downloads and platform verification.
+
 ### Environment Setup
 
 We recommend a clean Python environment first, then installing the project in editable mode so the `moss-tts-nano` command becomes available locally.

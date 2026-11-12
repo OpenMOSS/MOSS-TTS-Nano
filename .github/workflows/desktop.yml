@@ -1,0 +1,154 @@
+name: Portable desktop packages
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/desktop.yml'
+      - 'desktop/**'
+      - 'moss_tts_nano/**'
+      - 'onnx_tts_runtime.py'
+      - 'ort_cpu_runtime.py'
+      - 'text_normalization_pipeline.py'
+      - 'tts_robust_normalizer_single_script.py'
+  push:
+    branches: [main]
+    tags: ['desktop-v*']
+    paths:
+      - '.github/workflows/desktop.yml'
+      - 'desktop/**'
+      - 'moss_tts_nano/**'
+      - 'onnx_tts_runtime.py'
+      - 'ort_cpu_runtime.py'
+      - 'text_normalization_pipeline.py'
+      - 'tts_robust_normalizer_single_script.py'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Windows
+            runner: windows-2022
+            archive: MOSS-TTS-Nano-Windows-x86_64.zip
+          - platform: Linux
+            runner: ubuntu-22.04
+            archive: MOSS-TTS-Nano-Linux-x86_64.tar.gz
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    env:
+      HF_HUB_DISABLE_XET: '1'
+      HF_HUB_DISABLE_IMPLICIT_TOKEN: '1'
+      HF_HUB_DOWNLOAD_TIMEOUT: '60'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: desktop/requirements.txt
+      - name: Install Linux build and test libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth libegl1 libgl1 libpulse0 \
+            libasound2 libfontconfig1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 libxcb-xinput0 \
+            libxcb-randr0 libxcb-shape0 libxcb-util1 libxcb-xkb1 libwayland-client0 libwayland-cursor0 libwayland-egl1
+      - name: Install packaging dependencies
+        run: |
+          python -m pip install --only-binary=:all: -r desktop/requirements.txt
+      - uses: actions/cache@v5
+        with:
+          path: build/desktop/models
+          key: desktop-models-${{ hashFiles('desktop/build.py') }}
+      - name: Build the offline package
+        run: python -m desktop.build
+      - name: Test the extracted Windows package
+        if: runner.os == 'Windows'
+        run: python -m desktop.build --verify dist/${{ matrix.archive }}
+      - name: Test the extracted Linux package
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m desktop.build --verify dist/${{ matrix.archive }}
+      - uses: actions/upload-artifact@v6
+        with:
+          name: portable-${{ matrix.platform }}-x86_64
+          path: dist/${{ matrix.archive }}
+          if-no-files-found: error
+          compression-level: 0
+
+  linux-compatibility:
+    name: Linux smoke test (${{ matrix.image }})
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: 'ubuntu:24.04'
+            display: xcb
+          - image: 'ubuntu:26.04'
+            display: xcb
+          - image: 'ubuntu:26.10'
+            display: wayland
+          - image: 'debian:13'
+            display: xcb
+          - image: 'fedora:45'
+            display: xcb
+          - image: 'archlinux:base'
+            display: xcb
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: portable-Linux-x86_64
+          path: dist
+      - name: Prepare an isolated graphical test environment
+        env:
+          BASE_IMAGE: ${{ matrix.image }}
+          DISPLAY_BACKEND: ${{ matrix.display }}
+        run: |
+          docker build --build-arg BASE_IMAGE="$BASE_IMAGE" --build-arg DISPLAY_BACKEND="$DISPLAY_BACKEND" \
+            -t moss-desktop-test -f desktop/ci/linux-smoke.Dockerfile desktop/ci
+      - name: Launch the same portable package with networking disabled
+        env:
+          DISPLAY_BACKEND: ${{ matrix.display }}
+        run: |
+          docker run --rm --network none --user 1000:1000 -e DISPLAY_BACKEND -e HOME=/tmp \
+            --mount "type=bind,source=$PWD/dist,target=/packages,readonly" moss-desktop-test
+
+  release:
+    name: Attach packages to a draft release
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    needs: [build, linux-compatibility]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: portable-*-x86_64
+          path: dist
+          merge-multiple: true
+      - name: Upload Windows and Linux packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd dist
+          sha256sum MOSS-TTS-Nano-* > SHA256SUMS.txt
+          if gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' > "$RUNNER_TEMP/desktop-release-status"; then
+            if [ "$(cat "$RUNNER_TEMP/desktop-release-status")" != true ]; then
+              echo 'The desktop release is already published.'
+              exit 0
+            fi
+            gh release upload "$GITHUB_REF_NAME" --clobber MOSS-TTS-Nano-* SHA256SUMS.txt
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --generate-notes MOSS-TTS-Nano-* SHA256SUMS.txt
+          fi
