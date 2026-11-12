@@ -206,9 +206,11 @@ class DesktopWindow(QWidget):
     def _loaded(self, voices: list[str]) -> None:
         for voice in voices:
             self.voice.addItem(voice, (voice, ""))
-        for path in sorted((self.data_dir / "voices").iterdir()):
-            if path.is_file() and path.suffix.lower() in AUDIO_SUFFIXES:
-                self._add_reference(path)
+        voices_dir = self.data_dir / "voices"
+        if voices_dir.is_dir():
+            for path in sorted(voices_dir.iterdir()):
+                if path.is_file() and path.suffix.lower() in AUDIO_SUFFIXES:
+                    self._add_reference(path)
         self.ready = True
         self.busy = False
         self.status.setText(label("输入文字后即可生成。", "Enter text to generate speech."))
@@ -230,7 +232,9 @@ class DesktopWindow(QWidget):
         if source.suffix.lower() not in AUDIO_SUFFIXES:
             self._show_error(label("请选择 WAV、MP3、FLAC、OGG 或 Opus。", "Choose WAV, MP3, FLAC, OGG or Opus."))
             return
-        destination = self.data_dir / "voices" / source.name
+        voices_dir = self.data_dir / "voices"
+        voices_dir.mkdir(parents=True, exist_ok=True)
+        destination = voices_dir / source.name
         if destination.exists():
             destination = destination.with_name(f"{source.stem}_{uuid4().hex[:8]}{source.suffix}")
         temporary = destination.with_name(f".{uuid4().hex}.part")
@@ -240,7 +244,7 @@ class DesktopWindow(QWidget):
                 raise ValueError(label("请选择有内容的单声道或立体声音频。", "Choose a non-empty mono or stereo recording."))
             shutil.copyfile(source, temporary)
             temporary.replace(destination)
-        except (OSError, ValueError, soundfile.LibsndfileError) as exc:
+        except (OSError, ValueError, soundfile.SoundFileError) as exc:
             self._show_error(str(exc))
             return
         finally:
@@ -298,6 +302,7 @@ class DesktopWindow(QWidget):
     @Slot()
     def _open_output_folder(self) -> None:
         folder = self.data_dir / "outputs"
+        folder.mkdir(parents=True, exist_ok=True)
         if sys.platform == "linux" and getattr(sys, "frozen", False):
             # Launch the desktop file manager with the host's shared libraries.
             env = os.environ.copy()
@@ -377,7 +382,7 @@ def main() -> int:
     data_dir = root / "data"
     app = QApplication([sys.argv[0]])
     app.setApplicationName("MOSS-TTS Nano")
-    testing = sys.argv[1:] == ["--self-test"]
+    testing = "--self-test" in sys.argv[1:]
     try:
         for folder in ("outputs", "voices", "logs"):
             (data_dir / folder).mkdir(parents=True, exist_ok=True)

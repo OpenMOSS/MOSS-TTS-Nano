@@ -41,7 +41,7 @@ def stage_models(source: Path, destination: Path) -> None:
         files = {path for pattern in MODEL_PATTERNS for path in model.glob(pattern) if path.is_file()}
         if not any(path.suffix == ".onnx" for path in files):
             raise FileNotFoundError(f"ONNX files missing from {model}")
-        (destination / name).mkdir(parents=True)
+        (destination / name).mkdir(parents=True, exist_ok=True)
         for path in sorted(files):
             if path.stat().st_size < 256 and path.read_bytes().startswith(b"version https://git-lfs.github.com/spec/v1"):
                 raise ValueError(f"Download the Git LFS contents for {path}")
@@ -57,9 +57,11 @@ def copy_notices(destination: Path) -> None:
                 continue
             if "licenses" not in entry.parts and not entry.name.upper().startswith(("LICENSE", "COPYING", "NOTICE")):
                 continue
-            target = destination / "licenses" / entry
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(package.locate_file(entry), target)
+            source = package.locate_file(entry)
+            if source.is_file():
+                target = destination / "licenses" / entry
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
 
 
 def build(models: Path, *, fetch: bool) -> Path:
@@ -84,7 +86,7 @@ def build(models: Path, *, fetch: bool) -> Path:
         if windows:
             command.append("--windowed")
             # Qt imports Windows ICU. A different ICU on the build host's PATH can shadow it in the bundle.
-            system_root = Path(os.environ["SystemRoot"])
+            system_root = Path(os.environ.get("SystemRoot") or os.environ.get("windir") or "C:\\Windows")
             env["PATH"] = os.pathsep.join(map(str, (
                 Path(sys.executable).parent, sys.base_prefix, system_root / "System32", system_root,
             )))
@@ -94,9 +96,10 @@ def build(models: Path, *, fetch: bool) -> Path:
         if windows:
             for system_dll in ("icuuc.dll", "icuin.dll"):
                 (package / "_internal" / system_dll).unlink(missing_ok=True)
+                (package / system_dll).unlink(missing_ok=True)
         stage_models(models, package / "data" / "models")
         for folder in ("outputs", "voices", "logs"):
-            (package / "data" / folder).mkdir()
+            (package / "data" / folder).mkdir(parents=True, exist_ok=True)
         copy_notices(package)
         shutil.copy2(ROOT / "desktop" / "START-HERE.txt", package)
 
@@ -108,9 +111,14 @@ def build(models: Path, *, fetch: bool) -> Path:
 def verify(archive: Path) -> None:
     WORK.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="验证 Portable ", dir=WORK) as extracted:
-        shutil.unpack_archive(str(archive), extracted, filter="data" if archive.suffix == ".gz" else None)
+        kwargs = {}
+        if sys.version_info >= (3, 12) and (archive.suffix == ".gz" or str(archive).endswith(".tar.gz")):
+            kwargs["filter"] = "data"
+        shutil.unpack_archive(str(archive), extracted, **kwargs)
         package = Path(extracted) / APP_NAME
         binary = package / (f"{APP_NAME}.exe" if sys.platform == "win32" else APP_NAME)
+        if sys.platform != "win32":
+            binary.chmod(binary.stat().st_mode | 0o755)
         env = os.environ | {"HF_HUB_OFFLINE": "1"}
         try:
             subprocess.run([str(binary), "--self-test"], cwd=extracted, env=env, check=True, timeout=300)

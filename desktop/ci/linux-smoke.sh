@@ -31,6 +31,7 @@ done
 if [[ "$DISPLAY_BACKEND" == xcb ]]; then
   export DISPLAY=":$(cat "$work/display-number")"
 fi
+chmod +x "$work/MOSS-TTS/MOSS-TTS"
 if ! timeout 300 "$work/MOSS-TTS/MOSS-TTS" --self-test || ! test -f "$work/MOSS-TTS/data/self-test.ok"; then
   cat "$work/display.log"
   cat "$work/MOSS-TTS/data/logs/desktop.log" 2>/dev/null || true
