@@ -79,6 +79,7 @@ def generate_audio(runtime: DesktopRuntime, text: str, voice: str, reference: st
             prompt_audio_path=reference or None,
             output_audio_path=temporary,
             enable_wetext=False,
+            automatic_prosody=True,
         )
         if not result["waveform"].size:
             raise ValueError(label("没有生成音频。请换一段文字再试。", "No audio was generated. Try different text."))

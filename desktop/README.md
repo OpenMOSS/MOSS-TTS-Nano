@@ -11,6 +11,8 @@
 
 选择内置音色，或导入 WAV、MP3、FLAC、OGG、Opus 参考音频。输入文字后点击「生成语音」。应用可以直接播放、另存 WAV 或打开输出文件夹。导入的音色和生成结果分别在同级 `data/voices` 和 `data/outputs`。模型放在 `data/models`，启动和生成日志放在 `data/logs`。
 
+朗读会自动按句子和空行处理停顿。遇到「不是……而是……」「虽然……但是……」这类明确的对比或转折，且能在音频里定位分句边界时，会轻微突出后半句。
+
 ## 构建和发布
 
 Windows 和 Linux 都使用 Python 3.12 构建。Linux 发布包以 Ubuntu 22.04 x86-64 为构建基线。安装 [CI 所用的系统库](../.github/workflows/desktop.yml)后，在目标系统的独立构建环境中从仓库根目录运行以下命令。构建阶段需要访问 PyPI 和 Hugging Face。两套模型都使用固定提交。
