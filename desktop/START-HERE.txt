@@ -1,15 +1,15 @@
-MOSS-TTS Nano 便携版 / Portable edition
+NanoVoice 便携版 / Portable edition
 
-1. 解压整个压缩包，再双击 MOSS-TTS（Windows 上是 MOSS-TTS.exe）。
+1. 解压整个压缩包，再双击 NanoVoice（Windows 上是 NanoVoice.exe）。
 2. 等模型加载，输入文字，点击「生成语音」。可以使用内置音色，也可以导入参考音频。
 3. 生成结果保存在同级的 data/outputs，可直接播放或另存为 WAV。
 
-移动软件时请移动整个 MOSS-TTS 文件夹。data/voices 存放导入的参考音频。
+移动软件时请移动整个 NanoVoice 文件夹。data/voices 存放导入的参考音频。
 
-1. Extract the entire archive, then open MOSS-TTS (MOSS-TTS.exe on Windows).
+1. Extract the entire archive, then open NanoVoice (NanoVoice.exe on Windows).
 2. Wait for the models to load. Enter text and select Generate speech.
    You can use a built-in voice or import a reference recording.
 3. Your audio is saved under data/outputs. You can play it or save a WAV copy.
 
-Move the entire MOSS-TTS folder to move the app with its data.
+Move the entire NanoVoice folder to move the app with its data.
 Imported reference recordings are stored in data/voices.

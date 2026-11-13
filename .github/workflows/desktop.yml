@@ -44,10 +44,10 @@ jobs:
         include:
           - platform: Windows
             runner: windows-2022
-            archive: MOSS-TTS-Nano-Windows-x86_64.zip
+            archive: NanoVoice-Windows-x86_64.zip
           - platform: Linux
             runner: ubuntu-22.04
-            archive: MOSS-TTS-Nano-Linux-x86_64.tar.gz
+            archive: NanoVoice-Linux-x86_64.tar.gz
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     env:
@@ -118,7 +118,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v8
         with:
-          name: MOSS-TTS-Nano-Linux-x86_64.tar.gz
+          name: NanoVoice-Linux-x86_64.tar.gz
           path: dist
           skip-decompress: true
       - name: Prepare an isolated graphical test environment
@@ -151,7 +151,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
-          pattern: MOSS-TTS-Nano-*-x86_64.*
+          pattern: NanoVoice-*-x86_64.*
           path: dist
           merge-multiple: true
           skip-decompress: true

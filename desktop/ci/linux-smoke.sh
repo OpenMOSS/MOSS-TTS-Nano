@@ -2,7 +2,7 @@
 set -euo pipefail
 
 work=$(mktemp -d '/tmp/验证 Portable.XXXXXX')
-tar -xzf /packages/MOSS-TTS-Nano-Linux-x86_64.tar.gz -C "$work"
+tar -xzf /packages/NanoVoice-Linux-x86_64.tar.gz -C "$work"
 export QT_QPA_PLATFORM="$DISPLAY_BACKEND"
 export HF_HUB_OFFLINE=1
 export XDG_RUNTIME_DIR="$work/runtime"
@@ -31,9 +31,9 @@ done
 if [[ "$DISPLAY_BACKEND" == xcb ]]; then
   export DISPLAY=":$(cat "$work/display-number")"
 fi
-chmod +x "$work/MOSS-TTS/MOSS-TTS"
-if ! timeout 300 "$work/MOSS-TTS/MOSS-TTS" --self-test || ! test -f "$work/MOSS-TTS/data/self-test.ok"; then
+chmod +x "$work/NanoVoice/NanoVoice"
+if ! timeout 300 "$work/NanoVoice/NanoVoice" --self-test || ! test -f "$work/NanoVoice/data/self-test.ok"; then
   cat "$work/display.log"
-  cat "$work/MOSS-TTS/data/logs/desktop.log" 2>/dev/null || true
+  cat "$work/NanoVoice/data/logs/desktop.log" 2>/dev/null || true
   exit 1
 fi

@@ -1,4 +1,4 @@
-# MOSS-TTS Nano 便携桌面版
+# NanoVoice 便携桌面版
 
 ## 使用
 
@@ -6,8 +6,8 @@
 
 | 系统 | 下载文件 | 启动程序 |
 | --- | --- | --- |
-| Windows x86-64 | `MOSS-TTS-Nano-Windows-x86_64.zip` | `MOSS-TTS.exe` |
-| Linux x86-64 | `MOSS-TTS-Nano-Linux-x86_64.tar.gz` | `MOSS-TTS` |
+| Windows x86-64 | `NanoVoice-Windows-x86_64.zip` | `NanoVoice.exe` |
+| Linux x86-64 | `NanoVoice-Linux-x86_64.tar.gz` | `NanoVoice` |
 
 选择内置音色，或导入 WAV、MP3、FLAC、OGG、Opus 参考音频。输入文字后点击「生成语音」。应用可以直接播放、另存 WAV 或打开输出文件夹。导入的音色和生成结果分别在同级 `data/voices` 和 `data/outputs`。模型放在 `data/models`，启动和生成日志放在 `data/logs`。
 

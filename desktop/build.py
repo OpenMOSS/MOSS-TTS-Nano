@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "build" / "desktop"
 DIST = ROOT / "dist"
-APP_NAME = "MOSS-TTS"
+APP_NAME = "NanoVoice"
 MODEL_REVISIONS = json.loads((ROOT / "desktop" / "models.json").read_text(encoding="utf-8"))
 MODEL_PATTERNS = ("*.onnx", "*.data", "*.json", "tokenizer.model", "README.md", "LICENSE*")
 COMPRESSION_LEVEL = 3
@@ -68,13 +68,13 @@ def copy_notices(destination: Path) -> None:
 
 def archive_package(package: Path, *, windows: bool) -> Path:
     if windows:
-        archive = package.parent / "MOSS-TTS-Nano-Windows-x86_64.zip"
+        archive = package.parent / "NanoVoice-Windows-x86_64.zip"
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=COMPRESSION_LEVEL) as output:
             output.write(package, package.name)
             for path in sorted(package.rglob("*")):
                 output.write(path, path.relative_to(package.parent))
     else:
-        archive = package.parent / "MOSS-TTS-Nano-Linux-x86_64.tar.gz"
+        archive = package.parent / "NanoVoice-Linux-x86_64.tar.gz"
         with tarfile.open(archive, "w:gz", compresslevel=COMPRESSION_LEVEL) as output:
             output.add(package, arcname=package.name)
     return archive
@@ -149,7 +149,7 @@ def verify(archive: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build or verify a MOSS-TTS Nano portable desktop package.")
+    parser = argparse.ArgumentParser(description="Build or verify a NanoVoice portable desktop package.")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--models-dir", type=Path, help="Use pre-downloaded ONNX model folders.")
     mode.add_argument("--verify", type=Path, metavar="ARCHIVE", help="Run the packaged application's smoke test.")

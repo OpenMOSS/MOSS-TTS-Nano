@@ -70,7 +70,7 @@ def load_runtime(data_dir: Path) -> DesktopRuntime:
 
 def generate_audio(runtime: DesktopRuntime, text: str, voice: str, reference: str) -> Path:
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    output = runtime.output_dir / f"MOSS-TTS_{stamp}_{uuid4().hex[:8]}.wav"
+    output = runtime.output_dir / f"NanoVoice_{stamp}_{uuid4().hex[:8]}.wav"
     temporary = output.with_suffix(".part")
     try:
         result = runtime.synthesize(
@@ -131,7 +131,7 @@ class DesktopWindow(QWidget):
         self.output: Path | None = None
         self.player = QSoundEffect(self)
 
-        self.setWindowTitle("MOSS-TTS Nano")
+        self.setWindowTitle("NanoVoice")
         self.resize(700, 475)
         self.setMinimumSize(560, 355)
 
@@ -288,7 +288,7 @@ class DesktopWindow(QWidget):
             return
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setWindowTitle("MOSS-TTS Nano")
+        dialog.setWindowTitle("NanoVoice")
         dialog.setTextFormat(Qt.TextFormat.PlainText)
         dialog.setText(error)
         dialog.exec()
@@ -382,7 +382,7 @@ def main() -> int:
     root = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
     data_dir = root / "data"
     app = QApplication([sys.argv[0]])
-    app.setApplicationName("MOSS-TTS Nano")
+    app.setApplicationName("NanoVoice")
     testing = "--self-test" in sys.argv[1:]
     try:
         for folder in ("outputs", "voices", "logs"):
@@ -400,11 +400,11 @@ def main() -> int:
         window.worker_thread.start()
         return app.exec()
     except Exception as exc:
-        logging.exception("Could not start MOSS-TTS Nano")
+        logging.exception("Could not start NanoVoice")
         if not testing:
             dialog = QMessageBox()
             dialog.setIcon(QMessageBox.Icon.Critical)
-            dialog.setWindowTitle("MOSS-TTS Nano")
+            dialog.setWindowTitle("NanoVoice")
             dialog.setText(label("启动失败。请将软件解压到可写入的文件夹。", "Could not start. Extract the package into a writable folder."))
             dialog.setDetailedText(str(exc))
             dialog.exec()

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 cd dist
-windows=MOSS-TTS-Nano-Windows-x86_64.zip
-linux=MOSS-TTS-Nano-Linux-x86_64.tar.gz
+windows=NanoVoice-Windows-x86_64.zip
+linux=NanoVoice-Linux-x86_64.tar.gz
 sha256sum "$windows" "$linux" > SHA256SUMS.txt
 assets=("$windows" "$linux" SHA256SUMS.txt)
 
@@ -36,8 +36,8 @@ if draft=$(gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null); t
   fi
 else
   gh release create "$tag" "${assets[@]}" "${target[@]}" --latest --generate-notes \
-    --title "MOSS-TTS Nano · $tag" \
-    --notes "Download the Windows ZIP or Linux tar.gz below, extract the entire archive, and open MOSS-TTS. Both packages include the ONNX models for offline use."
+    --title "NanoVoice · $tag" \
+    --notes "Download the Windows ZIP or Linux tar.gz below, extract the entire archive, and open NanoVoice. Both packages include the ONNX models for offline use."
 fi
 
 printf '### 便携版下载\n\n[打开 GitHub Release](%s/%s/releases/tag/%s)\n' \
