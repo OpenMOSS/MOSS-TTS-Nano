@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from onnx_tts_runtime import OnnxTtsRuntime, ReadingChunk, _join_reading_audio
+from onnx_tts_runtime import OnnxTtsRuntime, ReadingChunk, _join_reading_audio, _PARAGRAPH_BREAK
 
 
 class CharacterCountRuntime(OnnxTtsRuntime):
@@ -45,6 +45,41 @@ class AutomaticProsodyTest(unittest.TestCase):
             np.testing.assert_array_equal(result[:100], speech)
             np.testing.assert_array_equal(result[-100:], speech)
             np.testing.assert_array_equal(result[100:-100], np.zeros((190, 2)))
+
+    def test_handles_1d_mono_audio_and_preserves_shape(self):
+        chunk = ReadingChunk("不是周三，是周五。", 280, 0.5)
+        speech = np.full(400, 0.5, dtype=np.float32)
+        audio = np.concatenate((speech, np.zeros(100, dtype=np.float32), speech))
+        adjusted = _join_reading_audio([chunk], [audio], 1000)
+        self.assertEqual(adjusted.ndim, 1)
+        self.assertEqual(adjusted.shape, audio.shape)
+        np.testing.assert_allclose(adjusted[:400], 0.46)
+        np.testing.assert_allclose(adjusted[-400:], 0.60)
+
+    def test_handles_silent_audio_chunk(self):
+        chunks = [ReadingChunk("短句，", 150), ReadingChunk("下一句。", 280)]
+        silence1 = np.zeros((100, 2), dtype=np.float32)
+        silence2 = np.zeros((100, 2), dtype=np.float32)
+        result = _join_reading_audio(chunks, [silence1, silence2], 1000)
+        self.assertEqual(result.shape, (250, 2))
+        self.assertTrue(np.all(result == 0))
+
+    def test_recognizes_contrast_with_digits_english_and_spaces(self):
+        runtime = CharacterCountRuntime()
+        chunks = runtime.plan_reading_chunks(
+            ["请确认。 交稿时间不是3号，是5号。", "“虽然价格是100元，但是质量很好。”"], 75
+        )
+        self.assertEqual(
+            [chunk.text for chunk in chunks],
+            ["请确认。", "交稿时间不是3号，是5号。", "“虽然价格是100元，但是质量很好。”"],
+        )
+        self.assertIsNotNone(chunks[1].focus_fraction)
+        self.assertIsNotNone(chunks[2].focus_fraction)
+
+    def test_paragraph_break_regex_with_consecutive_blank_lines(self):
+        text = "段落一\n\n\n段落二\r\n\r\n\r\n段落三"
+        splits = [p.strip() for p in _PARAGRAPH_BREAK.split(text) if p.strip()]
+        self.assertEqual(splits, ["段落一", "段落二", "段落三"])
 
 
 if __name__ == "__main__":

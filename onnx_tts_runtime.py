@@ -40,14 +40,18 @@ DEFAULT_VOICE_CLONE_INTER_CHUNK_PAUSE_LONG_SECONDS = 0.24
 SENTENCE_END_PUNCTUATION = set(".!?。！？；;")
 CLAUSE_SPLIT_PUNCTUATION = set(",，、；;：:")
 CLOSING_PUNCTUATION = set("\"'”’)]}）】》」』")
+OPENING_PUNCTUATION = set("\"'“‘([{（【《「『")
 
-_HAN = r"[\u3400-\u9fff]"
-_PARAGRAPH_BREAK = re.compile(r"\r?\n[^\S\r\n]*\r?\n|\r[^\S\r\n]*\r")
+_HAN_OR_ALNUM = r"[\u3400-\u9fff\uff10-\uff19\uff21-\uff3a\uff41-\uff5aA-Za-z0-9]"
+_ESCAPED_CLOSING = "".join(re.escape(c) for c in CLOSING_PUNCTUATION)
+_ESCAPED_OPENING = "".join(re.escape(c) for c in OPENING_PUNCTUATION)
+_PARAGRAPH_BREAK = re.compile(r"(?:\r?\n[^\S\r\n]*){2,}|\r[^\S\r\n]*\r")
 _SPOKEN_CONTRAST = re.compile(
-    rf"(?:^|(?<=[。！？!?；;]))"
-    rf"{_HAN}{{0,28}}?(?:(?P<correction>不是|并非|並非)|虽然|雖然){_HAN}{{1,24}}[，,]"
-    rf"(?P<focus>(?(correction)(?:而是|是)|(?:但是|但|不过|不過|可是|却|卻)){_HAN}{{2,32}})"
-    r"(?:[。！？!?；;]+|$)"
+    rf"(?:^|(?<=[。！？!?；;]))\s*"
+    rf"(?P<sentence>"
+    rf"(?P<prefix>[{_ESCAPED_OPENING}]*{_HAN_OR_ALNUM}{{0,28}}?(?:(?P<correction>不是|并非|並非)|虽然|雖然){_HAN_OR_ALNUM}{{1,24}})[，,]\s*"
+    rf"(?P<focus>(?(correction)(?:而是|是)|(?:但是|但|不过|不過|可是|却|卻)){_HAN_OR_ALNUM}{{2,32}})"
+    rf"(?:[。！？!?；;{_ESCAPED_CLOSING}]+|$))\s*"
 )
 
 
@@ -290,9 +294,13 @@ def _reading_pause_ms(text: str) -> int:
 
 def _emphasize_contrast(audio: np.ndarray, active: np.ndarray, sample_rate: int, fraction: float) -> np.ndarray:
     # shortcut: infer the clause boundary only from a nearby audible pause until word timing is available.
+    if not np.any(active):
+        return audio
     speech_start = int(active.argmax())
     speech_end = len(active) - int(active[::-1].argmax())
     speech_length = speech_end - speech_start
+    if speech_length <= 0:
+        return audio
     expected = speech_start + round(speech_length * fraction)
     edges = np.flatnonzero(np.diff(np.r_[True, active[speech_start:speech_end], True])) + speech_start
     candidates = [
@@ -316,7 +324,8 @@ def _emphasize_contrast(audio: np.ndarray, active: np.ndarray, sample_rate: int,
     focus_gain = min(1.20, max(1.0, 0.98 / peak)) if peak else 1.0
     adjusted = audio.copy()
     adjusted[:start] *= 0.92
-    adjusted[start:end] *= np.linspace(0.92, focus_gain, end - start, dtype=np.float32)[:, None]
+    fade = np.linspace(0.92, focus_gain, end - start, dtype=np.float32)
+    adjusted[start:end] *= fade[:, None] if audio.ndim > 1 else fade
     adjusted[end:] *= focus_gain
     return adjusted
 
@@ -324,19 +333,34 @@ def _emphasize_contrast(audio: np.ndarray, active: np.ndarray, sample_rate: int,
 def _join_reading_audio(
     chunks: Sequence[ReadingChunk], waveforms: list[np.ndarray], sample_rate: int
 ) -> np.ndarray:
+    if not waveforms:
+        return np.zeros((0, 1), dtype=np.float32)
     if any(not audio.size for audio in waveforms):
         raise ValueError("No audio was generated for part of the text.")
+    if len(chunks) != len(waveforms):
+        raise ValueError("Mismatch between number of chunks and waveforms.")
+    is_1d = all(audio.ndim == 1 for audio in waveforms)
+    normalized_waveforms = [
+        audio.reshape(-1, 1) if audio.ndim == 1 else audio
+        for audio in waveforms
+    ]
     edges: list[tuple[int, int]] = []
     adjusted: list[np.ndarray] = []
-    for chunk, audio in zip(chunks, waveforms):
-        if len(waveforms) == 1 and chunk.focus_fraction is None:
-            return audio
+    for chunk, audio in zip(chunks, normalized_waveforms):
+        if len(normalized_waveforms) == 1 and chunk.focus_fraction is None:
+            return waveforms[0]
         levels = np.max(np.abs(audio), axis=1)
         peak = float(np.max(levels))
         active = levels > min(0.006, peak * 0.04)
         # Keep a short margin around quiet consonants and breaths when shortening a join.
         margin = sample_rate // 50
-        edges.append((max(0, int(active.argmax()) - margin), max(0, int(active[::-1].argmax()) - margin)))
+        if np.any(active):
+            head_silence = max(0, int(active.argmax()) - margin)
+            tail_silence = max(0, int(active[::-1].argmax()) - margin)
+        else:
+            head_silence = len(audio) // 2
+            tail_silence = len(audio) - head_silence
+        edges.append((head_silence, tail_silence))
         if chunk.focus_fraction is not None and peak > 0:
             audio = _emphasize_contrast(audio, active, sample_rate, chunk.focus_fraction)
         adjusted.append(audio)
@@ -357,7 +381,8 @@ def _join_reading_audio(
         if missing > 0:
             parts.append(np.zeros((missing, audio.shape[1]), dtype=np.float32))
         start = excess - drop_tail
-    return _concat_waveforms(parts)
+    result = _concat_waveforms(parts)
+    return result.reshape(-1) if is_1d else result
 
 
 def _write_waveform_to_wav(path: str | Path, waveform: np.ndarray, sample_rate: int) -> Path:
@@ -545,15 +570,16 @@ class OnnxTtsRuntime(OrtCpuRuntime):
             paragraph_chunks: list[ReadingChunk] = []
             start = 0
             for match in _SPOKEN_CONTRAST.finditer(paragraph):
-                sentence = match.group()
+                sentence = match.group("sentence")
                 if self.count_text_tokens(sentence) > max_tokens:
                     continue
                 paragraph_chunks.extend(
                     ReadingChunk(piece, _reading_pause_ms(piece))
                     for piece in self.split_voice_clone_text(paragraph[start : match.start()], max_tokens=max_tokens)
                 )
-                prefix_length = match.start("focus") - match.start() - 1
-                fraction = prefix_length / (prefix_length + len(match["focus"]))
+                prefix = match.group("prefix")
+                focus = match.group("focus")
+                fraction = len(prefix) / (len(prefix) + len(focus))
                 paragraph_chunks.append(ReadingChunk(sentence, _reading_pause_ms(sentence), fraction))
                 start = match.end()
             paragraph_chunks.extend(
@@ -745,7 +771,14 @@ class OnnxTtsRuntime(OrtCpuRuntime):
         if seed is not None:
             self.rng = np.random.default_rng(int(seed))
         # Blank lines must be read before the text normalizer flattens them.
-        raw_paragraphs = _PARAGRAPH_BREAK.split(str(text or "")) if automatic_prosody else [text]
+        if automatic_prosody:
+            raw_paragraphs = [
+                p.strip() for p in _PARAGRAPH_BREAK.split(str(text or "")) if p.strip()
+            ]
+            if not raw_paragraphs:
+                raw_paragraphs = [str(text or "")]
+        else:
+            raw_paragraphs = [text]
         prepared_paragraphs = [
             self.prepare_synthesis_text(
                 text=paragraph,
