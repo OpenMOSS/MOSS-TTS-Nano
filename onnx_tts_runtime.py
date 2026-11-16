@@ -401,68 +401,9 @@ def _write_waveform_to_wav(path: str | Path, waveform: np.ndarray, sample_rate: 
     return output_path
 
 
-class OnnxTtsRuntime(OrtCpuRuntime):
-    def __init__(
-        self,
-        model_dir: str | Path | None = None,
-        *,
-        thread_count: int = 4,
-        max_new_frames: int | None = None,
-        do_sample: bool | None = None,
-        sample_mode: str | None = None,
-        execution_provider: str = EXECUTION_PROVIDER_CPU,
-        output_dir: str | Path = DEFAULT_OUTPUT_DIR,
-    ) -> None:
-        resolved_model_dir = ensure_browser_onnx_model_dir(model_dir)
-        super().__init__(
-            model_dir=resolved_model_dir,
-            thread_count=thread_count,
-            max_new_frames=max_new_frames,
-            do_sample=do_sample,
-            sample_mode=sample_mode,
-            execution_provider=execution_provider,
-        )
-        self.output_dir = Path(output_dir).expanduser().resolve()
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        tokenizer_relative_path = str(self.manifest["model_files"].get("tokenizer_model", "tokenizer.model"))
-        tokenizer_path = self.resolve_manifest_relative_path(tokenizer_relative_path)
-        self.sp_model = spm.SentencePieceProcessor(model_proto=tokenizer_path.read_bytes())
-        self._text_normalizer_manager: WeTextProcessingManager | None = None
-
-    def _ensure_text_normalizer(self, enable_wetext: bool) -> WeTextProcessingManager | None:
-        if not enable_wetext:
-            return None
-        if self._text_normalizer_manager is None:
-            self._text_normalizer_manager = WeTextProcessingManager()
-        snapshot = self._text_normalizer_manager.ensure_ready()
-        if not snapshot.ready:
-            raise RuntimeError(snapshot.error or snapshot.message)
-        return self._text_normalizer_manager
-
-    def encode_text(self, text: str) -> list[int]:
-        return [int(token_id) for token_id in self.sp_model.encode(str(text or ""), out_type=int)]
-
+class ReadingTextChunker:
     def count_text_tokens(self, text: str) -> int:
-        return len(self.encode_text(text))
-
-    def prepare_synthesis_text(
-        self,
-        *,
-        text: str,
-        voice: str = "",
-        prompt_text: str = "",
-        enable_wetext: bool = True,
-        enable_normalize_tts_text: bool = True,
-    ) -> dict[str, object]:
-        text_normalizer_manager = self._ensure_text_normalizer(enable_wetext)
-        return prepare_tts_request_texts(
-            text=text,
-            prompt_text=prompt_text,
-            voice=voice,
-            enable_wetext=bool(enable_wetext),
-            enable_normalize_tts_text=bool(enable_normalize_tts_text),
-            text_normalizer_manager=text_normalizer_manager,
-        )
+        raise NotImplementedError
 
     def split_text_by_token_budget(self, text: str, max_tokens: int) -> list[str]:
         remaining_text = str(text or "").strip()
@@ -556,14 +497,6 @@ class OnnxTtsRuntime(OrtCpuRuntime):
             chunks.append(current_chunk.strip())
         return chunks if len(chunks) > 1 else [normalized_text]
 
-    def estimate_voice_clone_inter_chunk_pause_seconds(self, text_chunk: str) -> float:
-        word_count = len([item for item in str(text_chunk or "").strip().split() if item])
-        return (
-            DEFAULT_VOICE_CLONE_INTER_CHUNK_PAUSE_SHORT_SECONDS
-            if word_count <= 4
-            else DEFAULT_VOICE_CLONE_INTER_CHUNK_PAUSE_LONG_SECONDS
-        )
-
     def plan_reading_chunks(self, paragraphs: Sequence[str], max_tokens: int) -> list[ReadingChunk]:
         chunks: list[ReadingChunk] = []
         for paragraph in paragraphs:
@@ -591,6 +524,78 @@ class OnnxTtsRuntime(OrtCpuRuntime):
                 paragraph_chunks[-1] = ReadingChunk(last.text, 460, last.focus_fraction)
                 chunks.extend(paragraph_chunks)
         return chunks
+
+
+class OnnxTtsRuntime(ReadingTextChunker, OrtCpuRuntime):
+    def __init__(
+        self,
+        model_dir: str | Path | None = None,
+        *,
+        thread_count: int = 4,
+        max_new_frames: int | None = None,
+        do_sample: bool | None = None,
+        sample_mode: str | None = None,
+        execution_provider: str = EXECUTION_PROVIDER_CPU,
+        output_dir: str | Path = DEFAULT_OUTPUT_DIR,
+    ) -> None:
+        resolved_model_dir = ensure_browser_onnx_model_dir(model_dir)
+        super().__init__(
+            model_dir=resolved_model_dir,
+            thread_count=thread_count,
+            max_new_frames=max_new_frames,
+            do_sample=do_sample,
+            sample_mode=sample_mode,
+            execution_provider=execution_provider,
+        )
+        self.output_dir = Path(output_dir).expanduser().resolve()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        tokenizer_relative_path = str(self.manifest["model_files"].get("tokenizer_model", "tokenizer.model"))
+        tokenizer_path = self.resolve_manifest_relative_path(tokenizer_relative_path)
+        self.sp_model = spm.SentencePieceProcessor(model_proto=tokenizer_path.read_bytes())
+        self._text_normalizer_manager: WeTextProcessingManager | None = None
+
+    def _ensure_text_normalizer(self, enable_wetext: bool) -> WeTextProcessingManager | None:
+        if not enable_wetext:
+            return None
+        if self._text_normalizer_manager is None:
+            self._text_normalizer_manager = WeTextProcessingManager()
+        snapshot = self._text_normalizer_manager.ensure_ready()
+        if not snapshot.ready:
+            raise RuntimeError(snapshot.error or snapshot.message)
+        return self._text_normalizer_manager
+
+    def encode_text(self, text: str) -> list[int]:
+        return [int(token_id) for token_id in self.sp_model.encode(str(text or ""), out_type=int)]
+
+    def count_text_tokens(self, text: str) -> int:
+        return len(self.encode_text(text))
+
+    def prepare_synthesis_text(
+        self,
+        *,
+        text: str,
+        voice: str = "",
+        prompt_text: str = "",
+        enable_wetext: bool = True,
+        enable_normalize_tts_text: bool = True,
+    ) -> dict[str, object]:
+        text_normalizer_manager = self._ensure_text_normalizer(enable_wetext)
+        return prepare_tts_request_texts(
+            text=text,
+            prompt_text=prompt_text,
+            voice=voice,
+            enable_wetext=bool(enable_wetext),
+            enable_normalize_tts_text=bool(enable_normalize_tts_text),
+            text_normalizer_manager=text_normalizer_manager,
+        )
+
+    def estimate_voice_clone_inter_chunk_pause_seconds(self, text_chunk: str) -> float:
+        word_count = len([item for item in str(text_chunk or "").strip().split() if item])
+        return (
+            DEFAULT_VOICE_CLONE_INTER_CHUNK_PAUSE_SHORT_SECONDS
+            if word_count <= 4
+            else DEFAULT_VOICE_CLONE_INTER_CHUNK_PAUSE_LONG_SECONDS
+        )
 
     def _load_reference_audio(self, reference_audio_path: str | Path) -> np.ndarray:
         import torch

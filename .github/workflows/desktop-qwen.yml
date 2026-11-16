@@ -1,0 +1,94 @@
+name: Qwen3-TTS Windows packages
+
+on:
+  push:
+    branches: ['codex/qwen-release']
+    tags: ['qwen-v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qwen-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 55
+    env:
+      HF_HUB_DISABLE_IMPLICIT_TOKEN: '1'
+      HF_HUB_DOWNLOAD_TIMEOUT: '120'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install the 64-bit Windows CPU runtime and packaging dependencies
+        run: |
+          python -m pip install --index-url https://pypi.org/simple torch==2.8.0 torchaudio==2.8.0
+          python -m pip install -r desktop/requirements-qwen.txt
+      - uses: actions/cache@v5
+        with:
+          path: build/desktop/qwen/models
+          key: qwen-windows-models-${{ hashFiles('desktop/qwen_runtime.py') }}
+      - name: Build and test both executable editions
+        run: python -m desktop.build_qwen
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qwen-windows
+          path: |
+            dist/NanoVoice-Qwen-*-Windows-x86_64.zip
+            dist/SHA256SUMS-Qwen.txt
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: true
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: qwen-windows
+          path: dist
+      - name: Publish the two Windows packages
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            tag="$GITHUB_REF_NAME"
+            target=(--verify-tag)
+          else
+            tag="qwen-$GITHUB_RUN_ID"
+            target=(--target "$GITHUB_SHA")
+          fi
+          assets=(dist/NanoVoice-Qwen-0.6B-Windows-x86_64.zip dist/NanoVoice-Qwen-1.7B-Windows-x86_64.zip dist/SHA256SUMS-Qwen.txt)
+          cat > "$RUNNER_TEMP/qwen-release.md" <<'EOF'
+          下载 0.6B 或 1.7B 的 Windows x64 ZIP，完整解压并打开 `NanoVoice-Qwen.exe`。
+
+          - 两版均包含独立 CPU 运行环境，支持预设音色、参考音频克隆和 WAV 导出。
+          - 首次联网获取对应权重，0.6B 约 2.5 GB，1.7B 约 4.5 GB。模型下载完毕即可离线合成。
+          - 手动安装模型的方法见包内 `START-HERE.txt`。
+          EOF
+          if draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [[ "$draft" == true ]]; then
+              gh release upload "$tag" "${assets[@]}" --clobber
+              gh release edit "$tag" --draft=false --latest=false
+            fi
+          else
+            gh release create "$tag" "${assets[@]}" "${target[@]}" --latest=false \
+              --title "NanoVoice · Qwen3-TTS 0.6B / 1.7B · Windows x64" --notes-file "$RUNNER_TEMP/qwen-release.md"
+          fi
+          gh release view "$tag" --json assets --jq '.assets[].name' > "$RUNNER_TEMP/qwen-assets.txt"
+          for path in "${assets[@]}"; do
+            grep -Fxq "${path##*/}" "$RUNNER_TEMP/qwen-assets.txt"
+          done
+          printf '[Windows 下载](%s/%s/releases/tag/%s)\n' "$GITHUB_SERVER_URL" "$GH_REPO" "$tag" >> "$GITHUB_STEP_SUMMARY"

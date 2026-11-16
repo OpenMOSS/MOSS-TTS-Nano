@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import shutil
@@ -7,6 +8,7 @@ import subprocess
 import sys
 import time
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -14,7 +16,7 @@ from uuid import uuid4
 import numpy as np
 import soundfile
 import soxr
-from PySide6.QtCore import QLocale, QObject, QThread, Qt, QUrl, Signal, Slot
+from PySide6.QtCore import QLocale, QObject, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtMultimedia import QSoundEffect
 from PySide6.QtWidgets import (
@@ -31,6 +33,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from desktop.qwen_runtime import (
+    QwenRuntime,
+    SAMPLE_AUDIO,
+    SAMPLE_RATE as QWEN_SAMPLE_RATE,
+    download_model,
+    model_name,
+    model_ready,
+)
 from onnx_tts_runtime import OnnxTtsRuntime
 
 
@@ -42,6 +52,17 @@ def label(zh: str, en: str) -> str:
 
 
 class DesktopRuntime(OnnxTtsRuntime):
+    def synthesize_to_file(self, text: str, voice: str, reference: str, output: Path) -> np.ndarray:
+        result = self.synthesize(
+            text=text,
+            voice=voice or None,
+            prompt_audio_path=reference or None,
+            output_audio_path=output,
+            enable_wetext=False,
+            automatic_prosody=True,
+        )
+        return result["waveform"]
+
     def _load_reference_audio(self, reference_audio_path: str | Path) -> np.ndarray:
         samples, rate = soundfile.read(str(reference_audio_path), dtype="float32", always_2d=True)
         if not len(samples):
@@ -68,20 +89,12 @@ def load_runtime(data_dir: Path) -> DesktopRuntime:
     )
 
 
-def generate_audio(runtime: DesktopRuntime, text: str, voice: str, reference: str) -> Path:
+def generate_audio(runtime: DesktopRuntime | QwenRuntime, text: str, voice: str, reference: str) -> Path:
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     output = runtime.output_dir / f"NanoVoice_{stamp}_{uuid4().hex[:8]}.wav"
     temporary = output.with_suffix(".part")
     try:
-        result = runtime.synthesize(
-            text=text,
-            voice=voice or None,
-            prompt_audio_path=reference or None,
-            output_audio_path=temporary,
-            enable_wetext=False,
-            automatic_prosody=True,
-        )
-        if not result["waveform"].size:
+        if not runtime.synthesize_to_file(text, voice, reference, temporary).size:
             raise ValueError(label("没有生成音频。请换一段文字再试。", "No audio was generated. Try different text."))
         temporary.replace(output)
     finally:
@@ -93,19 +106,32 @@ class EngineWorker(QObject):
     loaded = Signal(list)
     generated = Signal(str)
     failed = Signal(str)
+    status_changed = Signal(str)
 
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, qwen_model: Path | None, download_edition: str | None) -> None:
         super().__init__()
         self.data_dir = data_dir
-        self.runtime: DesktopRuntime | None = None
+        self.qwen_model = qwen_model
+        self.download_edition = download_edition
+        self.runtime: DesktopRuntime | QwenRuntime | None = None
 
     @Slot()
     def load(self) -> None:
         try:
-            self.runtime = load_runtime(self.data_dir)
+            if self.qwen_model is None:
+                self.runtime = load_runtime(self.data_dir)
+            else:
+                if self.download_edition and not model_ready(self.qwen_model):
+                    self.status_changed.emit(label(
+                        f"首次启动正在下载 Qwen3-TTS {self.download_edition} 模型…",
+                        f"Downloading Qwen3-TTS {self.download_edition} on first launch…",
+                    ))
+                    download_model(self.download_edition, self.qwen_model)
+                    self.status_changed.emit(label("正在加载语音模型…", "Loading voice models…"))
+                self.runtime = QwenRuntime(self.qwen_model, self.data_dir / "outputs")
             self.loaded.emit([row["voice"] for row in self.runtime.list_builtin_voices()])
         except Exception as exc:
-            logging.exception("Could not load ONNX models")
+            logging.exception("Could not load the speech model")
             self.failed.emit(str(exc))
 
     @Slot(str, str, str)
@@ -120,18 +146,19 @@ class EngineWorker(QObject):
 
 
 class DesktopWindow(QWidget):
-    generate_requested = Signal(str, str, str)
-
-    def __init__(self, data_dir: Path, *, testing: bool = False) -> None:
+    def __init__(self, data_dir: Path, *, qwen_model: Path | None = None,
+                 download_edition: str | None = None, testing: bool = False) -> None:
         super().__init__()
         self.data_dir = data_dir
+        self.qwen_model = qwen_model
         self.ready = False
         self.busy = True
         self.testing = testing
         self.output: Path | None = None
         self.player = QSoundEffect(self)
 
-        self.setWindowTitle("NanoVoice")
+        title = "NanoVoice · Qwen3-TTS" if qwen_model else "NanoVoice"
+        self.setWindowTitle(f"{title} {download_edition}" if download_edition else title)
         self.resize(700, 475)
         self.setMinimumSize(560, 355)
 
@@ -179,15 +206,13 @@ class DesktopWindow(QWidget):
         self._update_controls()
         self.text.setFocus()
 
-        self.worker_thread = QThread(self)
-        self.worker = EngineWorker(data_dir)
-        self.worker.moveToThread(self.worker_thread)
-        self.worker_thread.started.connect(self.worker.load)
-        self.worker_thread.finished.connect(self.worker.deleteLater)
-        self.generate_requested.connect(self.worker.generate)
-        self.worker.loaded.connect(self._loaded)
-        self.worker.generated.connect(self._generated)
-        self.worker.failed.connect(self._failed)
+        # PyTorch tensor operations can stall on a QThread on Windows.
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="NanoVoice")
+        self.worker = EngineWorker(data_dir, qwen_model, download_edition)
+        self.worker.status_changed.connect(self.status.setText, Qt.ConnectionType.QueuedConnection)
+        self.worker.loaded.connect(self._loaded, Qt.ConnectionType.QueuedConnection)
+        self.worker.generated.connect(self._generated, Qt.ConnectionType.QueuedConnection)
+        self.worker.failed.connect(self._failed, Qt.ConnectionType.QueuedConnection)
 
     def _update_controls(self) -> None:
         self.generate_button.setEnabled(self.ready and not self.busy and bool(self.text.toPlainText().strip()))
@@ -263,7 +288,7 @@ class DesktopWindow(QWidget):
         self.busy = True
         self.status.setText(label("正在生成语音…", "Generating speech…"))
         self._update_controls()
-        self.generate_requested.emit(text, voice, reference)
+        self.executor.submit(self.worker.generate, text, voice, reference)
 
     @Slot(str)
     def _generated(self, path: str) -> None:
@@ -276,10 +301,15 @@ class DesktopWindow(QWidget):
     @Slot(str)
     def _failed(self, error: str) -> None:
         self.busy = False
-        self.status.setText(
-            label("生成失败。", "Speech generation failed.")
-            if self.ready else label("模型加载失败。请重新解压完整的软件包。", "Model loading failed. Extract the complete package again.")
-        )
+        if self.ready:
+            self.status.setText(label("生成失败。", "Speech generation failed."))
+        elif self.qwen_model:
+            self.status.setText(label(
+                "Qwen3-TTS 加载失败。请检查模型目录和运行环境。",
+                "Qwen3-TTS could not load. Check the model folder and Python environment.",
+            ))
+        else:
+            self.status.setText(label("模型加载失败。请重新解压完整的软件包。", "Model loading failed. Extract the complete package again."))
         self._update_controls()
         self._show_error(error)
 
@@ -338,31 +368,35 @@ class DesktopWindow(QWidget):
             self.status.setText(label("当前任务结束后即可关闭。", "You can close the window when the current task finishes."))
             event.ignore()
             return
-        self.worker_thread.quit()
-        self.worker_thread.wait()
+        self.executor.shutdown()
         super().closeEvent(event)
 
 
 def self_test(window: DesktopWindow) -> None:
     reference = window.data_dir / "voices" / "测试 reference.wav"
-    sample_rate = 16000
-    t = np.arange(sample_rate * 2) / sample_rate
-    soundfile.write(reference, 0.15 * np.sin(2 * np.pi * 220 * t), sample_rate)
+    if window.qwen_model:
+        shutil.copyfile(SAMPLE_AUDIO / "en_2.wav", reference)
+    else:
+        sample_rate = 16000
+        t = np.arange(sample_rate * 2) / sample_rate
+        soundfile.write(reference, 0.15 * np.sin(2 * np.pi * 220 * t), sample_rate)
 
     def wait_for_worker() -> None:
-        deadline = time.monotonic() + 90
+        timeout = 180 if window.qwen_model else 90
+        deadline = time.monotonic() + timeout
         while window.busy:
             if time.monotonic() >= deadline:
-                raise TimeoutError("The synthesis worker did not finish in 90 seconds.")
+                raise TimeoutError(f"The synthesis worker did not finish in {timeout} seconds.")
             QApplication.processEvents()
-            QThread.msleep(10)
+            time.sleep(0.01)
 
     window.show()
-    window.worker_thread.start()
+    window.executor.submit(window.worker.load)
     wait_for_worker()
     if not window.ready or window.voice.count() < 2:
         raise RuntimeError("The desktop window could not load preset and reference voices.")
     window.text.setPlainText("你好，欢迎使用语音合成。")
+    expected_rate = QWEN_SAMPLE_RATE if window.qwen_model else 48000
     previous = None
     for index in (0, window.voice.count() - 1):
         window.voice.setCurrentIndex(index)
@@ -372,32 +406,43 @@ def self_test(window: DesktopWindow) -> None:
         if output is None or output == previous:
             raise RuntimeError("The desktop window did not generate a new WAV file.")
         with wave.open(str(output)) as audio:
-            if audio.getnframes() <= 0 or audio.getframerate() != 48000:
+            if audio.getnframes() <= 0 or audio.getframerate() != expected_rate:
                 raise RuntimeError(f"Invalid synthesized WAV: {output}")
         previous = output
     (window.data_dir / "self-test.ok").write_text("Preset and reference synthesis passed.\n", encoding="utf-8")
 
 
-def main() -> int:
+def main(*, qwen_edition: str | None = None) -> int:
     root = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
-    data_dir = root / "data"
+    parser = argparse.ArgumentParser(description="Launch NanoVoice.")
+    parser.add_argument("--data-dir", type=Path, default=root / "data", help="Folder for models, voices, outputs and logs.")
+    parser.add_argument("--self-test", action="store_true", help=argparse.SUPPRESS)
+    if qwen_edition or not getattr(sys, "frozen", False):
+        parser.add_argument("--qwen-model", type=Path, help="Use a local Qwen3-TTS Base model folder.")
+    args = parser.parse_args()
+    data_dir = args.data_dir.expanduser().resolve()
+    qwen_model = getattr(args, "qwen_model", None)
+    download_edition = qwen_edition if qwen_model is None else None
+    if download_edition:
+        qwen_model = data_dir / "models" / model_name(download_edition)
+    if qwen_model is not None:
+        qwen_model = qwen_model.expanduser().resolve()
     app = QApplication([sys.argv[0]])
     app.setApplicationName("NanoVoice")
-    testing = "--self-test" in sys.argv[1:]
+    testing = args.self_test
     try:
         for folder in ("outputs", "voices", "logs"):
             (data_dir / folder).mkdir(parents=True, exist_ok=True)
         logging.basicConfig(filename=data_dir / "logs" / "desktop.log", encoding="utf-8", level=logging.INFO)
-        window = DesktopWindow(data_dir, testing=testing)
+        window = DesktopWindow(data_dir, qwen_model=qwen_model, download_edition=download_edition, testing=testing)
         if testing:
             try:
                 self_test(window)
             finally:
-                window.worker_thread.quit()
-                window.worker_thread.wait()
+                window.executor.shutdown()
             return 0
         window.show()
-        window.worker_thread.start()
+        window.executor.submit(window.worker.load)
         return app.exec()
     except Exception as exc:
         logging.exception("Could not start NanoVoice")

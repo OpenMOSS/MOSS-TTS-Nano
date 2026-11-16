@@ -68,13 +68,13 @@ def copy_notices(destination: Path) -> None:
 
 def archive_package(package: Path, *, windows: bool) -> Path:
     if windows:
-        archive = package.parent / "NanoVoice-Windows-x86_64.zip"
+        archive = package.parent / f"{package.name}-Windows-x86_64.zip"
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=COMPRESSION_LEVEL) as output:
             output.write(package, package.name)
             for path in sorted(package.rglob("*")):
                 output.write(path, path.relative_to(package.parent))
     else:
-        archive = package.parent / "NanoVoice-Linux-x86_64.tar.gz"
+        archive = package.parent / f"{package.name}-Linux-x86_64.tar.gz"
         with tarfile.open(archive, "w:gz", compresslevel=COMPRESSION_LEVEL) as output:
             output.add(package, arcname=package.name)
     return archive
@@ -97,6 +97,7 @@ def build(models: Path, *, fetch: bool) -> Path:
             "--workpath", str(WORK / "pyinstaller"), "--specpath", str(WORK),
             "--exclude-module", "torch", "--exclude-module", "torchaudio",
             "--exclude-module", "transformers", "--exclude-module", "huggingface_hub",
+            "--exclude-module", "qwen_tts",
         ]
         env = os.environ | {"PYINSTALLER_CONFIG_DIR": str(WORK / "pyinstaller-cache")}
         if windows:

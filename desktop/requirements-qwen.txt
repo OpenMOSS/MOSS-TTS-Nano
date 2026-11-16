@@ -1,0 +1,2 @@
+-r requirements.txt
+qwen-tts==0.1.1
