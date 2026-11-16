@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import time
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
 import sentencepiece as spm
-import torch
-import torchaudio
 
 from moss_tts_nano.defaults import DEFAULT_OUTPUT_DIR
 from text_normalization_pipeline import WeTextProcessingManager, prepare_tts_request_texts
@@ -40,6 +40,26 @@ DEFAULT_VOICE_CLONE_INTER_CHUNK_PAUSE_LONG_SECONDS = 0.24
 SENTENCE_END_PUNCTUATION = set(".!?。！？；;")
 CLAUSE_SPLIT_PUNCTUATION = set(",，、；;：:")
 CLOSING_PUNCTUATION = set("\"'”’)]}）】》」』")
+OPENING_PUNCTUATION = set("\"'“‘([{（【《「『")
+
+_HAN_OR_ALNUM = r"[\u3400-\u9fff\uff10-\uff19\uff21-\uff3a\uff41-\uff5aA-Za-z0-9]"
+_ESCAPED_CLOSING = "".join(re.escape(c) for c in CLOSING_PUNCTUATION)
+_ESCAPED_OPENING = "".join(re.escape(c) for c in OPENING_PUNCTUATION)
+_PARAGRAPH_BREAK = re.compile(r"(?:\r?\n[^\S\r\n]*){2,}|\r[^\S\r\n]*\r")
+_SPOKEN_CONTRAST = re.compile(
+    rf"(?:^|(?<=[。！？!?；;]))\s*"
+    rf"(?P<sentence>"
+    rf"(?P<prefix>[{_ESCAPED_OPENING}]*{_HAN_OR_ALNUM}{{0,28}}?(?:(?P<correction>不是|并非|並非)|虽然|雖然){_HAN_OR_ALNUM}{{1,24}})[，,]\s*"
+    rf"(?P<focus>(?(correction)(?:而是|是)|(?:但是|但|不过|不過|可是|却|卻)){_HAN_OR_ALNUM}{{2,32}})"
+    rf"(?:[。！？!?；;{_ESCAPED_CLOSING}]+|$))\s*"
+)
+
+
+@dataclass(frozen=True)
+class ReadingChunk:
+    text: str
+    pause_ms: int
+    focus_fraction: float | None = None
 
 
 MODEL_MANIFEST_CANDIDATE_RELATIVE_PATHS = (
@@ -263,6 +283,108 @@ def _concat_waveforms(waveforms: list[np.ndarray]) -> np.ndarray:
     return np.concatenate(non_empty, axis=0)
 
 
+def _reading_pause_ms(text: str) -> int:
+    ending = text.rstrip("".join(CLOSING_PUNCTUATION))[-1:]
+    if ending in CLAUSE_SPLIT_PUNCTUATION:
+        return 150
+    if ending in SENTENCE_END_PUNCTUATION:
+        return 280
+    return 80
+
+
+def _emphasize_contrast(audio: np.ndarray, active: np.ndarray, sample_rate: int, fraction: float) -> np.ndarray:
+    # shortcut: infer the clause boundary only from a nearby audible pause until word timing is available.
+    if not np.any(active):
+        return audio
+    speech_start = int(active.argmax())
+    speech_end = len(active) - int(active[::-1].argmax())
+    speech_length = speech_end - speech_start
+    if speech_length <= 0:
+        return audio
+    expected = speech_start + round(speech_length * fraction)
+    edges = np.flatnonzero(np.diff(np.r_[True, active[speech_start:speech_end], True])) + speech_start
+    candidates = [
+        (int(start), int(end))
+        for start, end in edges.reshape(-1, 2)
+        if end - start >= sample_rate * 0.08
+        and start >= speech_start + sample_rate * 0.18
+        and end <= speech_end - sample_rate * 0.18
+        and abs((start + end) / 2 - expected) <= speech_length * 0.18
+    ]
+    candidates.sort(key=lambda pause: abs(sum(pause) / 2 - expected))
+    if not candidates:
+        return audio
+    start, end = candidates[0]
+    if len(candidates) > 1:
+        distance = abs((start + end) / 2 - expected)
+        next_distance = abs(sum(candidates[1]) / 2 - expected)
+        if next_distance - distance < sample_rate * 0.12:
+            return audio
+    peak = float(np.max(np.abs(audio[end:])))
+    focus_gain = min(1.20, max(1.0, 0.98 / peak)) if peak else 1.0
+    adjusted = audio.copy()
+    adjusted[:start] *= 0.92
+    fade = np.linspace(0.92, focus_gain, end - start, dtype=np.float32)
+    adjusted[start:end] *= fade[:, None] if audio.ndim > 1 else fade
+    adjusted[end:] *= focus_gain
+    return adjusted
+
+
+def _join_reading_audio(
+    chunks: Sequence[ReadingChunk], waveforms: list[np.ndarray], sample_rate: int
+) -> np.ndarray:
+    if not waveforms:
+        return np.zeros((0, 1), dtype=np.float32)
+    if any(not audio.size for audio in waveforms):
+        raise ValueError("No audio was generated for part of the text.")
+    if len(chunks) != len(waveforms):
+        raise ValueError("Mismatch between number of chunks and waveforms.")
+    is_1d = all(audio.ndim == 1 for audio in waveforms)
+    normalized_waveforms = [
+        audio.reshape(-1, 1) if audio.ndim == 1 else audio
+        for audio in waveforms
+    ]
+    edges: list[tuple[int, int]] = []
+    adjusted: list[np.ndarray] = []
+    for chunk, audio in zip(chunks, normalized_waveforms):
+        if len(normalized_waveforms) == 1 and chunk.focus_fraction is None:
+            return waveforms[0]
+        levels = np.max(np.abs(audio), axis=1)
+        peak = float(np.max(levels))
+        active = levels > min(0.006, peak * 0.04)
+        # Keep a short margin around quiet consonants and breaths when shortening a join.
+        margin = sample_rate // 50
+        if np.any(active):
+            head_silence = max(0, int(active.argmax()) - margin)
+            tail_silence = max(0, int(active[::-1].argmax()) - margin)
+        else:
+            head_silence = len(audio) // 2
+            tail_silence = len(audio) - head_silence
+        edges.append((head_silence, tail_silence))
+        if chunk.focus_fraction is not None and peak > 0:
+            audio = _emphasize_contrast(audio, active, sample_rate, chunk.focus_fraction)
+        adjusted.append(audio)
+
+    parts: list[np.ndarray] = []
+    start = 0
+    for index, audio in enumerate(adjusted):
+        if index == len(adjusted) - 1:
+            parts.append(audio[start:])
+            break
+        target = round(chunks[index].pause_ms * sample_rate / 1000)
+        tail = edges[index][1]
+        head = edges[index + 1][0]
+        excess = max(0, head + tail - target)
+        drop_tail = round(excess * tail / (head + tail)) if excess else 0
+        parts.append(audio[start : len(audio) - drop_tail])
+        missing = target - head - tail
+        if missing > 0:
+            parts.append(np.zeros((missing, audio.shape[1]), dtype=np.float32))
+        start = excess - drop_tail
+    result = _concat_waveforms(parts)
+    return result.reshape(-1) if is_1d else result
+
+
 def _write_waveform_to_wav(path: str | Path, waveform: np.ndarray, sample_rate: int) -> Path:
     output_path = Path(path).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -279,68 +401,9 @@ def _write_waveform_to_wav(path: str | Path, waveform: np.ndarray, sample_rate: 
     return output_path
 
 
-class OnnxTtsRuntime(OrtCpuRuntime):
-    def __init__(
-        self,
-        model_dir: str | Path | None = None,
-        *,
-        thread_count: int = 4,
-        max_new_frames: int | None = None,
-        do_sample: bool | None = None,
-        sample_mode: str | None = None,
-        execution_provider: str = EXECUTION_PROVIDER_CPU,
-        output_dir: str | Path = DEFAULT_OUTPUT_DIR,
-    ) -> None:
-        resolved_model_dir = ensure_browser_onnx_model_dir(model_dir)
-        super().__init__(
-            model_dir=resolved_model_dir,
-            thread_count=thread_count,
-            max_new_frames=max_new_frames,
-            do_sample=do_sample,
-            sample_mode=sample_mode,
-            execution_provider=execution_provider,
-        )
-        self.output_dir = Path(output_dir).expanduser().resolve()
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        tokenizer_relative_path = str(self.manifest["model_files"].get("tokenizer_model", "tokenizer.model"))
-        tokenizer_path = self.resolve_manifest_relative_path(tokenizer_relative_path)
-        self.sp_model = spm.SentencePieceProcessor(model_file=str(tokenizer_path))
-        self._text_normalizer_manager: WeTextProcessingManager | None = None
-
-    def _ensure_text_normalizer(self, enable_wetext: bool) -> WeTextProcessingManager | None:
-        if not enable_wetext:
-            return None
-        if self._text_normalizer_manager is None:
-            self._text_normalizer_manager = WeTextProcessingManager()
-        snapshot = self._text_normalizer_manager.ensure_ready()
-        if not snapshot.ready:
-            raise RuntimeError(snapshot.error or snapshot.message)
-        return self._text_normalizer_manager
-
-    def encode_text(self, text: str) -> list[int]:
-        return [int(token_id) for token_id in self.sp_model.encode(str(text or ""), out_type=int)]
-
+class ReadingTextChunker:
     def count_text_tokens(self, text: str) -> int:
-        return len(self.encode_text(text))
-
-    def prepare_synthesis_text(
-        self,
-        *,
-        text: str,
-        voice: str = "",
-        prompt_text: str = "",
-        enable_wetext: bool = True,
-        enable_normalize_tts_text: bool = True,
-    ) -> dict[str, object]:
-        text_normalizer_manager = self._ensure_text_normalizer(enable_wetext)
-        return prepare_tts_request_texts(
-            text=text,
-            prompt_text=prompt_text,
-            voice=voice,
-            enable_wetext=bool(enable_wetext),
-            enable_normalize_tts_text=bool(enable_normalize_tts_text),
-            text_normalizer_manager=text_normalizer_manager,
-        )
+        raise NotImplementedError
 
     def split_text_by_token_budget(self, text: str, max_tokens: int) -> list[str]:
         remaining_text = str(text or "").strip()
@@ -434,6 +497,98 @@ class OnnxTtsRuntime(OrtCpuRuntime):
             chunks.append(current_chunk.strip())
         return chunks if len(chunks) > 1 else [normalized_text]
 
+    def plan_reading_chunks(self, paragraphs: Sequence[str], max_tokens: int) -> list[ReadingChunk]:
+        chunks: list[ReadingChunk] = []
+        for paragraph in paragraphs:
+            paragraph_chunks: list[ReadingChunk] = []
+            start = 0
+            for match in _SPOKEN_CONTRAST.finditer(paragraph):
+                sentence = match.group("sentence")
+                if self.count_text_tokens(sentence) > max_tokens:
+                    continue
+                paragraph_chunks.extend(
+                    ReadingChunk(piece, _reading_pause_ms(piece))
+                    for piece in self.split_voice_clone_text(paragraph[start : match.start()], max_tokens=max_tokens)
+                )
+                prefix = match.group("prefix")
+                focus = match.group("focus")
+                fraction = len(prefix) / (len(prefix) + len(focus))
+                paragraph_chunks.append(ReadingChunk(sentence, _reading_pause_ms(sentence), fraction))
+                start = match.end()
+            paragraph_chunks.extend(
+                ReadingChunk(piece, _reading_pause_ms(piece))
+                for piece in self.split_voice_clone_text(paragraph[start:], max_tokens=max_tokens)
+            )
+            if paragraph_chunks:
+                last = paragraph_chunks[-1]
+                paragraph_chunks[-1] = ReadingChunk(last.text, 460, last.focus_fraction)
+                chunks.extend(paragraph_chunks)
+        return chunks
+
+
+class OnnxTtsRuntime(ReadingTextChunker, OrtCpuRuntime):
+    def __init__(
+        self,
+        model_dir: str | Path | None = None,
+        *,
+        thread_count: int = 4,
+        max_new_frames: int | None = None,
+        do_sample: bool | None = None,
+        sample_mode: str | None = None,
+        execution_provider: str = EXECUTION_PROVIDER_CPU,
+        output_dir: str | Path = DEFAULT_OUTPUT_DIR,
+    ) -> None:
+        resolved_model_dir = ensure_browser_onnx_model_dir(model_dir)
+        super().__init__(
+            model_dir=resolved_model_dir,
+            thread_count=thread_count,
+            max_new_frames=max_new_frames,
+            do_sample=do_sample,
+            sample_mode=sample_mode,
+            execution_provider=execution_provider,
+        )
+        self.output_dir = Path(output_dir).expanduser().resolve()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        tokenizer_relative_path = str(self.manifest["model_files"].get("tokenizer_model", "tokenizer.model"))
+        tokenizer_path = self.resolve_manifest_relative_path(tokenizer_relative_path)
+        self.sp_model = spm.SentencePieceProcessor(model_proto=tokenizer_path.read_bytes())
+        self._text_normalizer_manager: WeTextProcessingManager | None = None
+
+    def _ensure_text_normalizer(self, enable_wetext: bool) -> WeTextProcessingManager | None:
+        if not enable_wetext:
+            return None
+        if self._text_normalizer_manager is None:
+            self._text_normalizer_manager = WeTextProcessingManager()
+        snapshot = self._text_normalizer_manager.ensure_ready()
+        if not snapshot.ready:
+            raise RuntimeError(snapshot.error or snapshot.message)
+        return self._text_normalizer_manager
+
+    def encode_text(self, text: str) -> list[int]:
+        return [int(token_id) for token_id in self.sp_model.encode(str(text or ""), out_type=int)]
+
+    def count_text_tokens(self, text: str) -> int:
+        return len(self.encode_text(text))
+
+    def prepare_synthesis_text(
+        self,
+        *,
+        text: str,
+        voice: str = "",
+        prompt_text: str = "",
+        enable_wetext: bool = True,
+        enable_normalize_tts_text: bool = True,
+    ) -> dict[str, object]:
+        text_normalizer_manager = self._ensure_text_normalizer(enable_wetext)
+        return prepare_tts_request_texts(
+            text=text,
+            prompt_text=prompt_text,
+            voice=voice,
+            enable_wetext=bool(enable_wetext),
+            enable_normalize_tts_text=bool(enable_normalize_tts_text),
+            text_normalizer_manager=text_normalizer_manager,
+        )
+
     def estimate_voice_clone_inter_chunk_pause_seconds(self, text_chunk: str) -> float:
         word_count = len([item for item in str(text_chunk or "").strip().split() if item])
         return (
@@ -443,6 +598,9 @@ class OnnxTtsRuntime(OrtCpuRuntime):
         )
 
     def _load_reference_audio(self, reference_audio_path: str | Path) -> np.ndarray:
+        import torch
+        import torchaudio
+
         waveform, sample_rate = torchaudio.load(str(Path(reference_audio_path).expanduser().resolve()))
         waveform = waveform.to(torch.float32)
         target_sample_rate = int(self.codec_meta["codec_config"]["sample_rate"])
@@ -608,6 +766,7 @@ class OnnxTtsRuntime(OrtCpuRuntime):
         enable_wetext: bool = True,
         enable_normalize_tts_text: bool = True,
         seed: int | None = None,
+        automatic_prosody: bool = False,
     ) -> dict[str, Any]:
         if max_new_frames is not None:
             self.manifest["generation_defaults"]["max_new_frames"] = int(max_new_frames)
@@ -616,15 +775,35 @@ class OnnxTtsRuntime(OrtCpuRuntime):
         self.manifest["generation_defaults"]["do_sample"] = normalized_sample_mode != SAMPLE_MODE_GREEDY
         if seed is not None:
             self.rng = np.random.default_rng(int(seed))
-        prepared_texts = self.prepare_synthesis_text(
-            text=text,
-            voice=str(voice or ""),
-            enable_wetext=enable_wetext,
-            enable_normalize_tts_text=enable_normalize_tts_text,
-        )
-        prepared_text = str(prepared_texts["text"])
+        # Blank lines must be read before the text normalizer flattens them.
+        if automatic_prosody:
+            raw_paragraphs = [
+                p.strip() for p in _PARAGRAPH_BREAK.split(str(text or "")) if p.strip()
+            ]
+            if not raw_paragraphs:
+                raw_paragraphs = [str(text or "")]
+        else:
+            raw_paragraphs = [text]
+        prepared_paragraphs = [
+            self.prepare_synthesis_text(
+                text=paragraph,
+                voice=str(voice or ""),
+                enable_wetext=enable_wetext,
+                enable_normalize_tts_text=enable_normalize_tts_text,
+            )
+            for paragraph in raw_paragraphs
+        ]
+        prepared_texts = prepared_paragraphs[0]
+        paragraphs = [str(item["text"]) for item in prepared_paragraphs if str(item["text"]).strip()]
+        max_tokens = int(voice_clone_max_text_tokens)
+        if automatic_prosody:
+            prepared_text = "\n\n".join(paragraphs)
+            prepared_texts = prepared_texts | {"text": prepared_text, "normalized_text": prepared_text}
+            reading_chunks = self.plan_reading_chunks(paragraphs, max_tokens)
+            text_chunks = [chunk.text for chunk in reading_chunks]
+        else:
+            text_chunks = self.split_voice_clone_text(str(prepared_texts["text"]), max_tokens=max_tokens)
         prompt_audio_codes = self.resolve_prompt_audio_codes(voice=voice, prompt_audio_path=prompt_audio_path)
-        text_chunks = self.split_voice_clone_text(prepared_text, max_tokens=int(voice_clone_max_text_tokens))
         all_waveforms: list[np.ndarray] = []
         all_generated_frames: list[list[int]] = []
         sample_rate = int(self.codec_meta["codec_config"]["sample_rate"])
@@ -639,12 +818,16 @@ class OnnxTtsRuntime(OrtCpuRuntime):
             chunk_results.append(chunk_result)
             all_waveforms.append(np.asarray(chunk_result["waveform"], dtype=np.float32))
             all_generated_frames.extend(chunk_result["generated_frames"])
-            if chunk_index < len(text_chunks) - 1:
+            if not automatic_prosody and chunk_index < len(text_chunks) - 1:
                 pause_seconds = self.estimate_voice_clone_inter_chunk_pause_seconds(chunk_text)
                 pause_samples = max(0, int(round(sample_rate * pause_seconds)))
                 if pause_samples > 0:
                     all_waveforms.append(np.zeros((pause_samples, channels), dtype=np.float32))
-        waveform = _concat_waveforms(all_waveforms)
+        waveform = (
+            _join_reading_audio(reading_chunks, all_waveforms, sample_rate)
+            if automatic_prosody
+            else _concat_waveforms(all_waveforms)
+        )
         resolved_output_audio_path = (
             Path(output_audio_path).expanduser().resolve()
             if output_audio_path

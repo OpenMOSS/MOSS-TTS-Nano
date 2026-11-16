@@ -104,6 +104,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+desktop/data/
 env/
 venv/
 ENV/

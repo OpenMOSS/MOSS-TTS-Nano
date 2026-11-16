@@ -1,0 +1,16 @@
+NanoVoice · Qwen3-TTS (Windows x64)
+
+1. 完整解压 ZIP，双击 NanoVoice-Qwen.exe。软件包含 CPU 运行环境。
+2. 首次运行会从 Hugging Face 下载模型。0.6B 约 2.5 GB，1.7B 约 4.5 GB。
+3. 下载完成后可离线生成。参考音频在 data/voices，生成的 WAV 在 data/outputs。
+
+手动下载模型时，把完整的官方模型目录放到 data/models 中。
+目录名为 Qwen3-TTS-12Hz-0.6B-Base 或 Qwen3-TTS-12Hz-1.7B-Base，需含 speech_tokenizer 子目录。
+https://github.com/QwenLM/Qwen3-TTS#released-models-description-and-download
+
+1. Extract the whole ZIP, then open NanoVoice-Qwen.exe. The CPU runtime is included.
+2. The first launch downloads the model from Hugging Face (2.5 GB for 0.6B, 4.5 GB for 1.7B).
+3. Subsequent launches can run offline. References live in data/voices and WAV files in data/outputs.
+
+For manual setup, place the complete official model folder under data/models.
+The folder name is Qwen3-TTS-12Hz-0.6B-Base or Qwen3-TTS-12Hz-1.7B-Base and must include speech_tokenizer.
