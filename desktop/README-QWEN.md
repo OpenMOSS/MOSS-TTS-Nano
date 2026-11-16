@@ -13,7 +13,7 @@
 
 ## 构建
 
-在 Windows x64 的 Python 3.12 虚拟环境内运行：
+在 Windows x64 的 Python 3.12 虚拟环境内运行以下命令。
 
 ```powershell
 python -m pip install torch==2.8.0 torchaudio==2.8.0
